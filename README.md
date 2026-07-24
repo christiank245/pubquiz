@@ -50,6 +50,14 @@ PocketBase-powered pub quiz registration website using:
 7. Open landing page:
    - `http://127.0.0.1:8090/`
 
+## Tests
+
+```bash
+make test
+```
+
+Test stack: Ginkgo + Gomega.
+
 ## Build single binary (embedded templates + static assets)
 
 ```bash
