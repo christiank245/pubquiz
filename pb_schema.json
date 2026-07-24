@@ -70,6 +70,11 @@
         "type": "number",
         "required": true,
         "min": 1
+      },
+      {
+        "name": "willing_to_merge",
+        "type": "bool",
+        "required": false
       }
     ]
   }
