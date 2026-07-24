@@ -38,32 +38,56 @@
       </div>
       <p class="mt-3 text-sm text-slate-600">If not, go back and change team size to 10 or less.</p>
     {{else}}
-      {{if .Error}}
-      <div class="mt-4 rounded-md border border-red-300 bg-red-50 p-3 text-red-800">{{.Error}}</div>
+      {{if .ShowMergePrompt}}
+        <div class="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+          Small teams (fewer than 4 people) may be merged with another team to improve table matching. Is your team willing to be merged?
+        </div>
+        <form
+          class="mt-4 grid gap-3"
+          hx-post="/register"
+          hx-target="#registration-panel"
+          hx-swap="outerHTML"
+          method="post"
+          action="/register"
+        >
+          <input type="hidden" name="quiz_id" value="{{.Quiz.ID}}" />
+          <input type="hidden" name="email" value="{{.Email}}" />
+          <input type="hidden" name="team_name" value="{{.TeamName}}" />
+          <input type="hidden" name="team_size" value="{{.TeamSize}}" />
+          <button class="rounded-md bg-cyan-700 px-4 py-2 text-white hover:bg-cyan-800" type="submit" name="confirm_merge" value="yes">Yes, we can be merged</button>
+          <button class="rounded-md border border-slate-300 px-4 py-2 text-slate-800 hover:bg-slate-100" type="submit" name="confirm_merge" value="no">No, keep us separate</button>
+        </form>
+        <div class="mt-3">
+          <a class="text-sm text-cyan-700 underline" href="/quiz?id={{.Quiz.ID}}">Back to this quiz</a>
+        </div>
+      {{else}}
+        {{if .Error}}
+        <div class="mt-4 rounded-md border border-red-300 bg-red-50 p-3 text-red-800">{{.Error}}</div>
+        {{end}}
+        <form
+          class="mt-4 grid gap-3"
+          hx-post="/register"
+          hx-target="#registration-panel"
+          hx-swap="outerHTML"
+          method="post"
+          action="/register"
+        >
+          <input type="hidden" name="quiz_id" value="{{.Quiz.ID}}" />
+          <label class="grid gap-1 text-sm">
+            <span>Email</span>
+            <input class="rounded-md border border-slate-300 px-3 py-2" type="email" name="email" required value="{{.Email}}" />
+          </label>
+          <label class="grid gap-1 text-sm">
+            <span>Team name</span>
+            <input class="rounded-md border border-slate-300 px-3 py-2" type="text" name="team_name" required value="{{.TeamName}}" />
+          </label>
+          <label class="grid gap-1 text-sm">
+            <span>Team size</span>
+            <input class="rounded-md border border-slate-300 px-3 py-2" type="number" min="1" name="team_size" required value="{{.TeamSize}}" />
+          </label>
+          <button class="mt-1 rounded-md bg-cyan-700 px-4 py-2 text-white hover:bg-cyan-800" type="submit">Register</button>
+        </form>
       {{end}}
-      <form
-        class="mt-4 grid gap-3"
-        hx-post="/register"
-        hx-target="#registration-panel"
-        hx-swap="outerHTML"
-        method="post"
-        action="/register"
-      >
-        <input type="hidden" name="quiz_id" value="{{.Quiz.ID}}" />
-        <label class="grid gap-1 text-sm">
-          <span>Email</span>
-          <input class="rounded-md border border-slate-300 px-3 py-2" type="email" name="email" required value="{{.Email}}" />
-        </label>
-        <label class="grid gap-1 text-sm">
-          <span>Team name</span>
-          <input class="rounded-md border border-slate-300 px-3 py-2" type="text" name="team_name" required value="{{.TeamName}}" />
-        </label>
-        <label class="grid gap-1 text-sm">
-          <span>Team size</span>
-          <input class="rounded-md border border-slate-300 px-3 py-2" type="number" min="1" name="team_size" required value="{{.TeamSize}}" />
-        </label>
-        <button class="mt-1 rounded-md bg-cyan-700 px-4 py-2 text-white hover:bg-cyan-800" type="submit">Register</button>
-      </form>
     {{end}}
   {{end}}
 </section>
