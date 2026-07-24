@@ -1,14 +1,17 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v5"
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/models"
 	"github.com/pocketbase/pocketbase/models/schema"
@@ -27,6 +30,7 @@ type AdminPageData struct {
 	TableFields           []AdminField
 	FormFields            []AdminField
 	Rows                  []AdminRow
+	RegistrationMergeRows map[string]AdminRegistrationMergeRow
 	RelationSelectOptions map[string][]AdminSelectOption
 	Error                 string
 	Success               string
@@ -64,6 +68,15 @@ type AdminFormState struct {
 type AdminSelectOption struct {
 	Value string
 	Label string
+}
+
+type AdminRegistrationMergeRow struct {
+	QuizID         string
+	QuizLabel      string
+	TeamName       string
+	TeamSize       int
+	Email          string
+	WillingToMerge bool
 }
 
 func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
@@ -215,6 +228,53 @@ func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
 		return redirectWithMessage(c, collection.Name, "Entry updated.", "")
 	})
 
+	router.POST("/quiz-admin/collections/registrations/merge", func(c echo.Context) error {
+		if _, err := requireQuizAdmin(c, app); err != nil {
+			return err
+		}
+
+		registrationIDs, err := parseRegistrationIDsInput(c.FormValue("registration_ids"))
+		if err != nil {
+			return redirectWithMessage(c, "registrations", "", err.Error())
+		}
+
+		if err := validateMergeCandidates(app, registrationIDs); err != nil {
+			var reqErr mergeRequestError
+			if errors.As(err, &reqErr) {
+				return redirectWithMessage(c, "registrations", "", reqErr.Error())
+			}
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to validate merge candidates")
+		}
+
+		col, err := app.Dao().FindCollectionByNameOrId("registrations")
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "registrations collection is missing")
+		}
+
+		mergedRecord, err := mergeRegistrations(
+			app.Dao(),
+			col,
+			registrationIDs,
+			strings.TrimSpace(c.FormValue("team_name")),
+			strings.TrimSpace(c.FormValue("email")),
+			nil,
+		)
+		if err != nil {
+			var reqErr mergeRequestError
+			if errors.As(err, &reqErr) {
+				return redirectWithMessage(c, "registrations", "", reqErr.Error())
+			}
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to merge registrations")
+		}
+
+		return redirectWithMessage(
+			c,
+			"registrations",
+			fmt.Sprintf("Entries merged successfully into \"%s\".", mergedRecord.GetString("team_name")),
+			"",
+		)
+	})
+
 	router.POST("/quiz-admin/collections/:name/delete", func(c echo.Context) error {
 		if _, err := requireQuizAdmin(c, app); err != nil {
 			return err
@@ -240,6 +300,11 @@ func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
 			record, err := app.Dao().FindRecordById(collection.Name, recordID)
 			if err != nil {
 				return echo.NewHTTPError(http.StatusNotFound, "record not found")
+			}
+			if collection.Name == "quiz_dates" {
+				if err := deleteRegistrationsForQuizDate(app, recordID); err != nil {
+					return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete linked registrations")
+				}
 			}
 			if err := app.Dao().DeleteRecord(record); err != nil {
 				return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete record")
@@ -301,6 +366,61 @@ func clearQuizAdminCookie(c echo.Context) {
 	})
 }
 
+func deleteRegistrationsForQuizDate(app core.App, quizDateID string) error {
+	registrations, err := app.Dao().FindRecordsByFilter(
+		"registrations",
+		"quiz = {:quizId}",
+		"",
+		0,
+		0,
+		dbx.Params{"quizId": quizDateID},
+	)
+	if err != nil {
+		return err
+	}
+
+	for _, registration := range registrations {
+		if err := app.Dao().DeleteRecord(registration); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateMergeCandidates(app core.App, registrationIDs []string) error {
+	if len(registrationIDs) < 2 {
+		return mergeRequestError{message: "at least two unique registration ids are required"}
+	}
+
+	baseQuizID := ""
+	for _, registrationID := range registrationIDs {
+		record, err := app.Dao().FindRecordById("registrations", registrationID)
+		if err != nil {
+			return mergeRequestError{message: fmt.Sprintf("registration not found: %s", registrationID)}
+		}
+
+		if !record.GetBool("willing_to_merge") {
+			return mergeRequestError{message: "all selected registrations must have willing_to_merge set to true"}
+		}
+
+		quizID := strings.TrimSpace(record.GetString("quiz"))
+		if quizID == "" {
+			return mergeRequestError{message: fmt.Sprintf("registration %s has no quiz id", registrationID)}
+		}
+
+		if baseQuizID == "" {
+			baseQuizID = quizID
+			continue
+		}
+		if quizID != baseQuizID {
+			return mergeRequestError{message: "all selected registrations must belong to the same quiz"}
+		}
+	}
+
+	return nil
+}
+
 func managedCollections(app core.App) ([]*models.Collection, error) {
 	all := []*models.Collection{}
 	if err := app.Dao().CollectionQuery().OrderBy("name ASC").All(&all); err != nil {
@@ -349,8 +469,10 @@ func buildAdminPageData(app core.App, collectionName, successMessage, errorMessa
 	if err != nil {
 		return AdminPageData{}, echo.NewHTTPError(http.StatusInternalServerError, "failed to load records")
 	}
+	sortAdminRecordsByDate(app, collection.Name, records)
 
 	rows := make([]AdminRow, 0, len(records))
+	registrationMergeRows := map[string]AdminRegistrationMergeRow{}
 	for _, record := range records {
 		row := AdminRow{
 			ID:     record.Id,
@@ -360,11 +482,19 @@ func buildAdminPageData(app core.App, collectionName, successMessage, errorMessa
 			row.Values = append(row.Values, adminCellValue(record, field, relationLabels[field.Name]))
 		}
 		rows = append(rows, row)
-	}
 
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].ID < rows[j].ID
-	})
+		if collection.Name == "registrations" {
+			quizID := strings.TrimSpace(record.GetString("quiz"))
+			registrationMergeRows[record.Id] = AdminRegistrationMergeRow{
+				QuizID:         quizID,
+				QuizLabel:      relationLabelForID(quizID, relationLabels["quiz"]),
+				TeamName:       strings.TrimSpace(record.GetString("team_name")),
+				TeamSize:       record.GetInt("team_size"),
+				Email:          strings.TrimSpace(record.GetString("email")),
+				WillingToMerge: record.GetBool("willing_to_merge"),
+			}
+		}
+	}
 
 	if len(form.Text) == 0 && len(form.Bools) == 0 {
 		form = defaultFormState(formFields)
@@ -384,6 +514,7 @@ func buildAdminPageData(app core.App, collectionName, successMessage, errorMessa
 		TableFields:           tableFields,
 		FormFields:            formFields,
 		Rows:                  rows,
+		RegistrationMergeRows: registrationMergeRows,
 		RelationSelectOptions: relationSelectOptions,
 		Error:                 errorMessage,
 		Success:               successMessage,
@@ -392,6 +523,94 @@ func buildAdminPageData(app core.App, collectionName, successMessage, errorMessa
 		EditRecordID:          editRecordID,
 		Form:                  form,
 	}, nil
+}
+
+func sortAdminRecordsByDate(app core.App, collectionName string, records []*models.Record) {
+	switch collectionName {
+	case "quiz_dates":
+		sort.SliceStable(records, func(i, j int) bool {
+			iWhen, iHasDate := recordDateTime(records[i].GetString("scheduled_at"))
+			jWhen, jHasDate := recordDateTime(records[j].GetString("scheduled_at"))
+			if iHasDate && jHasDate {
+				if iWhen.Equal(jWhen) {
+					return records[i].Id < records[j].Id
+				}
+				return iWhen.Before(jWhen)
+			}
+			if iHasDate != jHasDate {
+				return iHasDate
+			}
+			return records[i].Id < records[j].Id
+		})
+	case "registrations":
+		quizDateCache := map[string]registrationQuizDateCacheEntry{}
+
+		sort.SliceStable(records, func(i, j int) bool {
+			iWhen, iHasDate := registrationQuizDate(app, records[i], quizDateCache)
+			jWhen, jHasDate := registrationQuizDate(app, records[j], quizDateCache)
+			if iHasDate && jHasDate {
+				if iWhen.Equal(jWhen) {
+					return records[i].Id < records[j].Id
+				}
+				return iWhen.Before(jWhen)
+			}
+			if iHasDate != jHasDate {
+				return iHasDate
+			}
+			return records[i].Id < records[j].Id
+		})
+	default:
+		sort.SliceStable(records, func(i, j int) bool {
+			return records[i].Id < records[j].Id
+		})
+	}
+}
+
+type registrationQuizDateCacheEntry struct {
+	when    time.Time
+	hasDate bool
+	loaded  bool
+}
+
+func registrationQuizDate(
+	app core.App,
+	record *models.Record,
+	quizDateCache map[string]registrationQuizDateCacheEntry,
+) (time.Time, bool) {
+	quizID := strings.TrimSpace(record.GetString("quiz"))
+	if quizID == "" {
+		return time.Time{}, false
+	}
+
+	if cached, ok := quizDateCache[quizID]; ok && cached.loaded {
+		return cached.when, cached.hasDate
+	}
+
+	quizRecord, err := app.Dao().FindRecordById("quiz_dates", quizID)
+	if err != nil {
+		quizDateCache[quizID] = registrationQuizDateCacheEntry{loaded: true}
+		return time.Time{}, false
+	}
+
+	when, hasDate := recordDateTime(quizRecord.GetString("scheduled_at"))
+	quizDateCache[quizID] = registrationQuizDateCacheEntry{
+		when:    when,
+		hasDate: hasDate,
+		loaded:  true,
+	}
+	return when, hasDate
+}
+
+func recordDateTime(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	when, err := parseDateTime(raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return when, true
 }
 
 func renderAdminPageWithFormError(
@@ -477,13 +696,15 @@ func adminFields(collection *models.Collection) ([]AdminField, []AdminField) {
 	}
 
 	if collection.IsAuth() {
-		formFields = append(formFields,
+		formFields = append(
+			formFields,
 			AdminField{Name: "password", Type: "password", Editable: true, IsVirtual: true},
 			AdminField{Name: "passwordConfirm", Type: "password", Editable: true, IsVirtual: true},
 		)
 	}
 
-	tableFields = append(tableFields,
+	tableFields = append(
+		tableFields,
 		AdminField{Name: "created", Type: "date"},
 		AdminField{Name: "updated", Type: "date"},
 	)
@@ -496,10 +717,13 @@ func adminCellValue(record *models.Record, field AdminField, relationLabels map[
 	case "id":
 		return record.Id
 	case "created", "updated":
-		return record.GetString(field.Name)
+		return formatGermanDateTimeLabel(record.GetString(field.Name))
 	default:
 		if field.Type == schema.FieldTypeRelation {
 			return formatRelationValue(record.Get(field.Name), relationLabels, field.Multiple)
+		}
+		if field.Type == "date" {
+			return formatGermanDateTimeLabel(record.GetString(field.Name))
 		}
 		return formatAdminValue(record.Get(field.Name))
 	}
@@ -544,6 +768,12 @@ func applyFormToRecord(record *models.Record, collection *models.Collection, for
 				return fmt.Errorf("%s must be a valid number", field.Name)
 			}
 			record.Set(field.Name, numberValue)
+		case "date":
+			normalizedDateTime, err := normalizeDateTimeInput(form.Text[field.Name])
+			if err != nil {
+				return fmt.Errorf("%s must be a valid date-time", field.Name)
+			}
+			record.Set(field.Name, normalizedDateTime)
 		default:
 			record.Set(field.Name, form.Text[field.Name])
 		}
@@ -600,6 +830,10 @@ func formStateFromRecord(record *models.Record, fields []AdminField) AdminFormSt
 		}
 		if field.Type == "bool" {
 			result.Bools[field.Name] = record.GetBool(field.Name)
+			continue
+		}
+		if field.Type == "date" {
+			result.Text[field.Name] = formatDateTimeInputValue(record.GetString(field.Name))
 			continue
 		}
 		if field.Multiple {
@@ -684,6 +918,57 @@ func normalizeStringSlice(value any) []string {
 	}
 }
 
+func formatDateTimeInputValue(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	when, err := parseDateTime(raw)
+	if err != nil {
+		return raw
+	}
+
+	return when.Local().Format("2006-01-02T15:04")
+}
+
+func formatGermanDateTimeLabel(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	when, err := parseDateTime(raw)
+	if err != nil {
+		return raw
+	}
+
+	return when.Local().Format("02.01.2006 15:04")
+}
+
+func normalizeDateTimeInput(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+
+	when, err := time.ParseInLocation("2006-01-02T15:04", raw, time.Local)
+	if err == nil {
+		return when.UTC().Format(time.RFC3339), nil
+	}
+
+	when, err = time.ParseInLocation("2006-01-02T15:04:05", raw, time.Local)
+	if err == nil {
+		return when.UTC().Format(time.RFC3339), nil
+	}
+
+	when, err = parseDateTime(raw)
+	if err != nil {
+		return "", err
+	}
+	return when.UTC().Format(time.RFC3339), nil
+}
+
 func relationDataForCollection(
 	app core.App,
 	collection *models.Collection,
@@ -746,13 +1031,7 @@ func relationDataForCollection(
 func relationRecordLabel(app core.App, relatedCollection *models.Collection, record *models.Record) (string, error) {
 	if relatedCollection.Name == "quiz_dates" {
 		scheduledAtRaw := strings.TrimSpace(record.GetString("scheduled_at"))
-		scheduledAtLabel := scheduledAtRaw
-		if scheduledAtRaw != "" {
-			when, err := parseDateTime(scheduledAtRaw)
-			if err == nil {
-				scheduledAtLabel = when.Format("2006-01-02 15:04")
-			}
-		}
+		scheduledAtLabel := formatGermanDateTimeLabel(scheduledAtRaw)
 
 		locationLabel := record.GetString("location")
 		locationID := strings.TrimSpace(locationLabel)

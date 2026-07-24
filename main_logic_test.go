@@ -77,6 +77,29 @@ var _ = Describe("registration and quiz helpers", func() {
 			It("builds username from email", func() {
 				Expect(authUsernameFromEmail("quiz.admin@example.com")).To(Equal("quiz.admin"))
 			})
+
+			It("formats stored date-times for datetime-local inputs", func() {
+				formatted := formatDateTimeInputValue("2026-08-05T17:30:00Z")
+				Expect(formatted).To(Equal(time.Date(2026, time.August, 5, 17, 30, 0, 0, time.UTC).Local().Format("2006-01-02T15:04")))
+			})
+
+			It("formats stored date-times for German labels", func() {
+				formatted := formatGermanDateTimeLabel("2026-08-05T17:30:00Z")
+				Expect(formatted).To(Equal(time.Date(2026, time.August, 5, 17, 30, 0, 0, time.UTC).Local().Format("02.01.2006 15:04")))
+			})
+
+			It("normalizes datetime-local input for storage", func() {
+				normalized, err := normalizeDateTimeInput("2026-08-05T19:30")
+				Expect(err).NotTo(HaveOccurred())
+
+				expected := time.Date(2026, time.August, 5, 19, 30, 0, 0, time.Local).UTC().Format(time.RFC3339)
+				Expect(normalized).To(Equal(expected))
+			})
+
+			It("rejects invalid date-time input", func() {
+				_, err := normalizeDateTimeInput("not-a-date")
+				Expect(err).To(HaveOccurred())
+			})
 		})
 	})
 

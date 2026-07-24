@@ -34,12 +34,12 @@
     {{end}}
 
     {{if .Admin.Rows}}
-      <form class="mt-4" method="post" action="/quiz-admin/collections/{{.Admin.ActiveCollection}}/delete">
+      <form class="mt-4" method="post" action="/quiz-admin/collections/{{.Admin.ActiveCollection}}/delete" onsubmit="return confirmAdminDelete(this)">
         <div class="w-full overflow-x-auto rounded-md border border-slate-200">
           <table class="min-w-full bg-white text-sm">
             <thead class="bg-slate-100 text-left text-slate-700">
               <tr>
-                <th class="px-3 py-2">Delete</th>
+                <th class="px-3 py-2">Select</th>
                 {{range .Admin.TableFields}}
                   <th class="px-3 py-2">{{.Name}}</th>
                 {{end}}
@@ -49,7 +49,21 @@
               {{range .Admin.Rows}}
                 {{$rowID := .ID}}
                 <tr class="border-t border-slate-200">
-                  <td class="px-3 py-2 align-top"><input type="checkbox" name="delete_ids" value="{{.ID}}" /></td>
+                  <td class="px-3 py-2 align-top">
+                    <input
+                      type="checkbox"
+                      name="delete_ids"
+                      value="{{.ID}}"
+                      {{if eq $.Admin.ActiveCollection "registrations"}}
+                        data-merge-quiz-id="{{(index $.Admin.RegistrationMergeRows $rowID).QuizID}}"
+                        data-merge-quiz-label="{{(index $.Admin.RegistrationMergeRows $rowID).QuizLabel}}"
+                        data-merge-team-name="{{(index $.Admin.RegistrationMergeRows $rowID).TeamName}}"
+                        data-merge-team-size="{{(index $.Admin.RegistrationMergeRows $rowID).TeamSize}}"
+                        data-merge-email="{{(index $.Admin.RegistrationMergeRows $rowID).Email}}"
+                        data-merge-willing="{{if (index $.Admin.RegistrationMergeRows $rowID).WillingToMerge}}true{{else}}false{{end}}"
+                      {{end}}
+                    />
+                  </td>
                   {{range $value := .Values}}
                     <td class="p-0 align-top">
                       <a class="block w-full px-3 py-2 text-slate-700 hover:bg-slate-50" href="/quiz-admin/collections/{{$.Admin.ActiveCollection}}?edit={{$rowID}}">
@@ -63,7 +77,19 @@
           </table>
         </div>
         {{if ne .Admin.ActiveType "view"}}
-          <button class="mt-3 rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-800" type="submit">Delete selected</button>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button class="rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-800" type="submit">Delete selected</button>
+            {{if eq .Admin.ActiveCollection "registrations"}}
+              <button
+                id="merge-entries-button"
+                class="rounded-md bg-cyan-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-cyan-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                type="button"
+                disabled
+              >
+                Merge entries
+              </button>
+            {{end}}
+          </div>
         {{end}}
       </form>
     {{else}}
@@ -113,7 +139,7 @@
               {{else}}
                 <input
                   class="rounded-md border border-slate-300 px-3 py-2"
-                  type="{{if eq .Type "number"}}number{{else if eq .Type "email"}}email{{else}}text{{end}}"
+                  type="{{if eq .Type "number"}}number{{else if eq .Type "email"}}email{{else if eq .Type "date"}}datetime-local{{else}}text{{end}}"
                   name="field_{{.Name}}"
                   value="{{index $.Admin.Form.Text .Name}}"
                   {{if .Required}}required{{end}}
@@ -130,4 +156,166 @@
     </div>
   </div>
 {{end}}
+
+{{if eq .Admin.ActiveCollection "registrations"}}
+  <div id="merge-entries-modal" class="fixed inset-0 z-50 hidden place-items-center bg-slate-900/60 p-4">
+    <div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 shadow-lg">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <h3 class="text-lg font-semibold">Merge entries</h3>
+        <button id="merge-entries-close" class="text-sm text-cyan-700 underline" type="button">Close</button>
+      </div>
+      <p id="merge-entries-summary" class="mb-3 text-sm text-slate-700"></p>
+      <div class="overflow-x-auto rounded-md border border-slate-200">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-left text-slate-700">
+            <tr>
+              <th class="px-3 py-2">Team name</th>
+              <th class="px-3 py-2">Team size</th>
+              <th class="px-3 py-2">Email</th>
+              <th class="px-3 py-2">Registration ID</th>
+            </tr>
+          </thead>
+          <tbody id="merge-entries-preview"></tbody>
+        </table>
+      </div>
+
+      <form class="mt-4 grid gap-3" method="post" action="/quiz-admin/collections/registrations/merge">
+        <input id="merge-registration-ids" type="hidden" name="registration_ids" />
+        <label class="grid gap-1 text-sm">
+          <span class="font-medium text-slate-700">New team name (optional)</span>
+          <input class="rounded-md border border-slate-300 px-3 py-2" type="text" name="team_name" />
+        </label>
+        <label class="grid gap-1 text-sm">
+          <span class="font-medium text-slate-700">New email address (optional)</span>
+          <input class="rounded-md border border-slate-300 px-3 py-2" type="email" name="email" />
+        </label>
+        <button class="mt-1 w-fit rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-800" type="submit">Merge selected teams</button>
+      </form>
+    </div>
+  </div>
+{{end}}
+
+<script>
+  function confirmAdminDelete(form) {
+    var selected = form.querySelectorAll('input[name="delete_ids"]:checked');
+    if (selected.length === 0) {
+      alert("Select at least one entry to delete.");
+      return false;
+    }
+
+    var targetLabel = selected.length === 1 ? "this entry" : "these " + selected.length + " entries";
+    return window.confirm("Do you really want to delete " + targetLabel + "?");
+  }
+
+  (function () {
+    var mergeButton = document.getElementById("merge-entries-button");
+    var mergeModal = document.getElementById("merge-entries-modal");
+    if (!mergeButton || !mergeModal) {
+      return;
+    }
+
+    var closeButton = document.getElementById("merge-entries-close");
+    var summary = document.getElementById("merge-entries-summary");
+    var previewBody = document.getElementById("merge-entries-preview");
+    var registrationIDsInput = document.getElementById("merge-registration-ids");
+    var checkboxes = Array.prototype.slice.call(document.querySelectorAll('input[name="delete_ids"]'));
+
+    function selectedEntries() {
+      return checkboxes
+        .filter(function (checkbox) {
+          return checkbox.checked;
+        })
+        .map(function (checkbox) {
+          return {
+            id: checkbox.value,
+            quizId: checkbox.dataset.mergeQuizId || "",
+            quizLabel: checkbox.dataset.mergeQuizLabel || checkbox.dataset.mergeQuizId || "",
+            teamName: checkbox.dataset.mergeTeamName || "",
+            teamSize: checkbox.dataset.mergeTeamSize || "",
+            email: checkbox.dataset.mergeEmail || "",
+            willing: checkbox.dataset.mergeWilling === "true",
+          };
+        });
+    }
+
+    function isMergeSelectionValid(entries) {
+      if (entries.length < 2) {
+        return false;
+      }
+      var firstQuizID = entries[0].quizId;
+      if (!firstQuizID) {
+        return false;
+      }
+      return entries.every(function (entry) {
+        return entry.quizId === firstQuizID && entry.willing;
+      });
+    }
+
+    function updateMergeButtonState() {
+      mergeButton.disabled = !isMergeSelectionValid(selectedEntries());
+    }
+
+    function closeModal() {
+      mergeModal.classList.add("hidden");
+      mergeModal.classList.remove("grid");
+    }
+
+    function openModal(entries) {
+      registrationIDsInput.value = entries.map(function (entry) { return entry.id; }).join(",");
+      summary.textContent = entries.length + " entries from " + entries[0].quizLabel + " will be merged.";
+      previewBody.innerHTML = "";
+
+      entries.forEach(function (entry) {
+        var row = document.createElement("tr");
+        row.className = "border-t border-slate-200";
+
+        var teamCell = document.createElement("td");
+        teamCell.className = "px-3 py-2";
+        teamCell.textContent = entry.teamName;
+        row.appendChild(teamCell);
+
+        var sizeCell = document.createElement("td");
+        sizeCell.className = "px-3 py-2";
+        sizeCell.textContent = entry.teamSize;
+        row.appendChild(sizeCell);
+
+        var emailCell = document.createElement("td");
+        emailCell.className = "px-3 py-2";
+        emailCell.textContent = entry.email;
+        row.appendChild(emailCell);
+
+        var idCell = document.createElement("td");
+        idCell.className = "px-3 py-2 font-mono text-xs";
+        idCell.textContent = entry.id;
+        row.appendChild(idCell);
+
+        previewBody.appendChild(row);
+      });
+
+      mergeModal.classList.remove("hidden");
+      mergeModal.classList.add("grid");
+    }
+
+    checkboxes.forEach(function (checkbox) {
+      checkbox.addEventListener("change", updateMergeButtonState);
+    });
+
+    mergeButton.addEventListener("click", function () {
+      var entries = selectedEntries();
+      if (!isMergeSelectionValid(entries)) {
+        return;
+      }
+      openModal(entries);
+    });
+
+    closeButton.addEventListener("click", closeModal);
+    mergeModal.addEventListener("click", function (event) {
+      if (event.target === mergeModal) {
+        closeModal();
+      }
+    });
+
+    updateMergeButtonState();
+  })();
+</script>
 {{end}}
