@@ -79,13 +79,16 @@ type UnregisterViewData struct {
 }
 
 type PageData struct {
-	Title        string
-	PageTemplate string
-	SetupError   string
-	Quizzes      []QuizCard
-	Quiz         QuizCard
-	Register     RegisterPanelData
-	Unregister   UnregisterViewData
+	Title               string
+	PageTemplate        string
+	IsQuizAdmin         bool
+	ShowQuizAdminLogout bool
+	SetupError          string
+	Quizzes             []QuizCard
+	Quiz                QuizCard
+	Register            RegisterPanelData
+	Unregister          UnregisterViewData
+	Admin               AdminPageData
 }
 
 func main() {
@@ -319,6 +322,8 @@ func main() {
 				})
 			},
 		})
+
+		registerQuizAdminRoutes(e.Router, app)
 
 		return nil
 	})

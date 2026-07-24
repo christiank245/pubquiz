@@ -1,0 +1,827 @@
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/labstack/echo/v5"
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/models"
+	"github.com/pocketbase/pocketbase/models/schema"
+	"github.com/pocketbase/pocketbase/tokens"
+)
+
+const (
+	quizAdminAuthCollection = "quiz_admins"
+	quizAdminAuthCookieName = "quiz_admin_token"
+)
+
+type AdminPageData struct {
+	Collections           []AdminCollectionNav
+	ActiveCollection      string
+	ActiveType            string
+	TableFields           []AdminField
+	FormFields            []AdminField
+	Rows                  []AdminRow
+	RelationSelectOptions map[string][]AdminSelectOption
+	Error                 string
+	Success               string
+	ShowCreateModal       bool
+	ShowEditModal         bool
+	EditRecordID          string
+	Form                  AdminFormState
+}
+
+type AdminCollectionNav struct {
+	Name string
+	Type string
+}
+
+type AdminField struct {
+	Name               string
+	Type               string
+	Editable           bool
+	Required           bool
+	Multiple           bool
+	IsVirtual          bool
+	RelationCollection string
+}
+
+type AdminRow struct {
+	ID     string
+	Values []string
+}
+
+type AdminFormState struct {
+	Text  map[string]string
+	Bools map[string]bool
+}
+
+type AdminSelectOption struct {
+	Value string
+	Label string
+}
+
+func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
+	router.GET("/quiz-admin", func(c echo.Context) error {
+		if _, err := requireQuizAdmin(c, app); err != nil {
+			return err
+		}
+
+		collections, err := managedCollections(app)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to load collections")
+		}
+		if len(collections) == 0 {
+			return renderPage(c, PageData{
+				Title:               "Quiz Admin",
+				PageTemplate:        "admin_collection",
+				IsQuizAdmin:         true,
+				ShowQuizAdminLogout: true,
+				Admin: AdminPageData{
+					Error: "No non-system collections are available.",
+				},
+			})
+		}
+
+		return c.Redirect(http.StatusSeeOther, "/quiz-admin/collections/"+url.PathEscape(collections[0].Name))
+	})
+
+	router.GET("/quiz-admin/login", func(c echo.Context) error {
+		if _, err := currentQuizAdmin(c, app); err == nil {
+			return c.Redirect(http.StatusSeeOther, "/quiz-admin")
+		}
+		return renderPage(c, PageData{
+			Title:        "Quiz Admin Login",
+			PageTemplate: "admin_login",
+			IsQuizAdmin:  true,
+		})
+	})
+
+	router.POST("/quiz-admin/login", func(c echo.Context) error {
+		email := strings.TrimSpace(c.FormValue("email"))
+		password := strings.TrimSpace(c.FormValue("password"))
+
+		record, err := app.Dao().FindAuthRecordByEmail(quizAdminAuthCollection, email)
+		if err != nil || !record.ValidatePassword(password) {
+			return renderPage(c, PageData{
+				Title:        "Quiz Admin Login",
+				PageTemplate: "admin_login",
+				IsQuizAdmin:  true,
+				Admin: AdminPageData{
+					Error: "Invalid email or password.",
+				},
+			})
+		}
+
+		token, err := tokens.NewRecordAuthToken(app, record)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to create auth token")
+		}
+
+		setQuizAdminCookie(c, token)
+		return c.Redirect(http.StatusSeeOther, "/quiz-admin")
+	})
+
+	router.POST("/quiz-admin/logout", func(c echo.Context) error {
+		clearQuizAdminCookie(c)
+		return c.Redirect(http.StatusSeeOther, "/quiz-admin/login")
+	})
+
+	router.GET("/quiz-admin/collections/:name", func(c echo.Context) error {
+		if _, err := requireQuizAdmin(c, app); err != nil {
+			return err
+		}
+
+		name := strings.TrimSpace(c.PathParam("name"))
+		page, err := buildAdminPageData(app, name, c.QueryParam("success"), c.QueryParam("error"), c.QueryParam("new") == "1", c.QueryParam("edit"), AdminFormState{})
+		if err != nil {
+			return err
+		}
+
+		return renderPage(c, PageData{
+			Title:               "Quiz Admin",
+			PageTemplate:        "admin_collection",
+			IsQuizAdmin:         true,
+			ShowQuizAdminLogout: true,
+			Admin:               page,
+		})
+	})
+
+	router.POST("/quiz-admin/collections/:name/create", func(c echo.Context) error {
+		if _, err := requireQuizAdmin(c, app); err != nil {
+			return err
+		}
+
+		collection, err := managedCollectionByName(app, strings.TrimSpace(c.PathParam("name")))
+		if err != nil {
+			return err
+		}
+		if collection.IsView() {
+			return redirectWithMessage(c, collection.Name, "", "View collections are read-only.")
+		}
+
+		tableFields, formFields := adminFields(collection)
+		form := parseAdminForm(c, formFields)
+
+		record := models.NewRecord(collection)
+		if err := applyFormToRecord(record, collection, formFields, form, true); err != nil {
+			return renderAdminPageWithFormError(c, app, collection.Name, tableFields, formFields, true, false, "", form, err.Error())
+		}
+		if err := app.Dao().SaveRecord(record); err != nil {
+			return renderAdminPageWithFormError(c, app, collection.Name, tableFields, formFields, true, false, "", form, err.Error())
+		}
+
+		return redirectWithMessage(c, collection.Name, "Entry created.", "")
+	})
+
+	router.POST("/quiz-admin/collections/:name/update", func(c echo.Context) error {
+		if _, err := requireQuizAdmin(c, app); err != nil {
+			return err
+		}
+
+		collection, err := managedCollectionByName(app, strings.TrimSpace(c.PathParam("name")))
+		if err != nil {
+			return err
+		}
+		if collection.IsView() {
+			return redirectWithMessage(c, collection.Name, "", "View collections are read-only.")
+		}
+
+		recordID := strings.TrimSpace(c.FormValue("record_id"))
+		if recordID == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "record id is required")
+		}
+
+		record, err := app.Dao().FindRecordById(collection.Name, recordID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusNotFound, "record not found")
+		}
+
+		tableFields, formFields := adminFields(collection)
+		form := parseAdminForm(c, formFields)
+
+		if err := applyFormToRecord(record, collection, formFields, form, false); err != nil {
+			return renderAdminPageWithFormError(c, app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error())
+		}
+		if err := app.Dao().SaveRecord(record); err != nil {
+			return renderAdminPageWithFormError(c, app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error())
+		}
+
+		return redirectWithMessage(c, collection.Name, "Entry updated.", "")
+	})
+
+	router.POST("/quiz-admin/collections/:name/delete", func(c echo.Context) error {
+		if _, err := requireQuizAdmin(c, app); err != nil {
+			return err
+		}
+
+		collection, err := managedCollectionByName(app, strings.TrimSpace(c.PathParam("name")))
+		if err != nil {
+			return err
+		}
+		if collection.IsView() {
+			return redirectWithMessage(c, collection.Name, "", "View collections are read-only.")
+		}
+
+		if err := c.Request().ParseForm(); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid form data")
+		}
+		deleteIDs := c.Request().Form["delete_ids"]
+		if len(deleteIDs) == 0 {
+			return redirectWithMessage(c, collection.Name, "", "Select at least one entry to delete.")
+		}
+
+		for _, recordID := range deleteIDs {
+			record, err := app.Dao().FindRecordById(collection.Name, recordID)
+			if err != nil {
+				return echo.NewHTTPError(http.StatusNotFound, "record not found")
+			}
+			if err := app.Dao().DeleteRecord(record); err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete record")
+			}
+		}
+
+		return redirectWithMessage(c, collection.Name, fmt.Sprintf("Deleted %d entrie(s).", len(deleteIDs)), "")
+	})
+}
+
+func requireQuizAdmin(c echo.Context, app core.App) (*models.Record, error) {
+	record, err := currentQuizAdmin(c, app)
+	if err != nil {
+		clearQuizAdminCookie(c)
+		return nil, c.Redirect(http.StatusSeeOther, "/quiz-admin/login")
+	}
+	return record, nil
+}
+
+func currentQuizAdmin(c echo.Context, app core.App) (*models.Record, error) {
+	cookie, err := c.Cookie(quizAdminAuthCookieName)
+	if err != nil {
+		return nil, err
+	}
+	token := strings.TrimSpace(cookie.Value)
+	if token == "" {
+		return nil, fmt.Errorf("auth token is empty")
+	}
+
+	record, err := app.Dao().FindAuthRecordByToken(token, app.Settings().RecordAuthToken.Secret)
+	if err != nil {
+		return nil, err
+	}
+	if record.Collection().Name != quizAdminAuthCollection {
+		return nil, fmt.Errorf("invalid auth collection")
+	}
+	return record, nil
+}
+
+func setQuizAdminCookie(c echo.Context, token string) {
+	cookie := &http.Cookie{
+		Name:     quizAdminAuthCookieName,
+		Value:    token,
+		Path:     "/quiz-admin",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	}
+	c.SetCookie(cookie)
+}
+
+func clearQuizAdminCookie(c echo.Context) {
+	c.SetCookie(&http.Cookie{
+		Name:     quizAdminAuthCookieName,
+		Value:    "",
+		Path:     "/quiz-admin",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func managedCollections(app core.App) ([]*models.Collection, error) {
+	all := []*models.Collection{}
+	if err := app.Dao().CollectionQuery().OrderBy("name ASC").All(&all); err != nil {
+		return nil, err
+	}
+
+	result := make([]*models.Collection, 0, len(all))
+	for _, collection := range all {
+		if collection.System || collection.IsAuth() {
+			continue
+		}
+		result = append(result, collection)
+	}
+	return result, nil
+}
+
+func managedCollectionByName(app core.App, name string) (*models.Collection, error) {
+	collection, err := app.Dao().FindCollectionByNameOrId(name)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusNotFound, "collection not found")
+	}
+	if collection.System || collection.IsAuth() {
+		return nil, echo.NewHTTPError(http.StatusForbidden, "this collection type is not available in quiz admin")
+	}
+	return collection, nil
+}
+
+func buildAdminPageData(app core.App, collectionName, successMessage, errorMessage string, showCreate bool, editRecordID string, form AdminFormState) (AdminPageData, error) {
+	collections, err := managedCollections(app)
+	if err != nil {
+		return AdminPageData{}, echo.NewHTTPError(http.StatusInternalServerError, "failed to load collections")
+	}
+
+	collection, err := managedCollectionByName(app, collectionName)
+	if err != nil {
+		return AdminPageData{}, err
+	}
+
+	tableFields, formFields := adminFields(collection)
+	relationLabels, relationSelectOptions, err := relationDataForCollection(app, collection, tableFields)
+	if err != nil {
+		return AdminPageData{}, echo.NewHTTPError(http.StatusInternalServerError, "failed to load relation data")
+	}
+
+	records, err := app.Dao().FindRecordsByExpr(collection.Name)
+	if err != nil {
+		return AdminPageData{}, echo.NewHTTPError(http.StatusInternalServerError, "failed to load records")
+	}
+
+	rows := make([]AdminRow, 0, len(records))
+	for _, record := range records {
+		row := AdminRow{
+			ID:     record.Id,
+			Values: make([]string, 0, len(tableFields)),
+		}
+		for _, field := range tableFields {
+			row.Values = append(row.Values, adminCellValue(record, field, relationLabels[field.Name]))
+		}
+		rows = append(rows, row)
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].ID < rows[j].ID
+	})
+
+	if len(form.Text) == 0 && len(form.Bools) == 0 {
+		form = defaultFormState(formFields)
+		if editRecordID != "" {
+			record, err := app.Dao().FindRecordById(collection.Name, editRecordID)
+			if err != nil {
+				return AdminPageData{}, echo.NewHTTPError(http.StatusNotFound, "record not found")
+			}
+			form = formStateFromRecord(record, formFields)
+		}
+	}
+
+	return AdminPageData{
+		Collections:           toCollectionNav(collections),
+		ActiveCollection:      collection.Name,
+		ActiveType:            collection.Type,
+		TableFields:           tableFields,
+		FormFields:            formFields,
+		Rows:                  rows,
+		RelationSelectOptions: relationSelectOptions,
+		Error:                 errorMessage,
+		Success:               successMessage,
+		ShowCreateModal:       showCreate,
+		ShowEditModal:         editRecordID != "",
+		EditRecordID:          editRecordID,
+		Form:                  form,
+	}, nil
+}
+
+func renderAdminPageWithFormError(
+	c echo.Context,
+	app core.App,
+	collectionName string,
+	tableFields []AdminField,
+	formFields []AdminField,
+	showCreate bool,
+	showEdit bool,
+	editRecordID string,
+	form AdminFormState,
+	errorMessage string,
+) error {
+	page, err := buildAdminPageData(app, collectionName, "", errorMessage, showCreate, editRecordID, form)
+	if err != nil {
+		return err
+	}
+	page.TableFields = tableFields
+	page.FormFields = formFields
+	page.ShowCreateModal = showCreate
+	page.ShowEditModal = showEdit
+	page.EditRecordID = editRecordID
+	page.Form = form
+
+	return renderPage(c, PageData{
+		Title:               "Quiz Admin",
+		PageTemplate:        "admin_collection",
+		IsQuizAdmin:         true,
+		ShowQuizAdminLogout: true,
+		Admin:               page,
+	})
+}
+
+func toCollectionNav(collections []*models.Collection) []AdminCollectionNav {
+	result := make([]AdminCollectionNav, 0, len(collections))
+	for _, collection := range collections {
+		result = append(result, AdminCollectionNav{
+			Name: collection.Name,
+			Type: collection.Type,
+		})
+	}
+	return result
+}
+
+func adminFields(collection *models.Collection) ([]AdminField, []AdminField) {
+	tableFields := []AdminField{}
+	formFields := []AdminField{}
+
+	if collection.IsAuth() {
+		authBaseFields := []AdminField{
+			{Name: "username", Type: "text", Editable: true, Required: true},
+			{Name: "email", Type: "email", Editable: true, Required: true},
+			{Name: "emailVisibility", Type: "bool", Editable: true},
+			{Name: "verified", Type: "bool", Editable: true},
+		}
+		tableFields = append(tableFields, authBaseFields...)
+		formFields = append(formFields, authBaseFields...)
+	}
+
+	for _, field := range collection.Schema.Fields() {
+		if err := field.InitOptions(); err != nil {
+			continue
+		}
+		adminField := AdminField{
+			Name:     field.Name,
+			Type:     field.Type,
+			Editable: !field.System,
+			Required: field.Required,
+		}
+		if opt, ok := field.Options.(schema.MultiValuer); ok {
+			adminField.Multiple = opt.IsMultiple()
+		}
+		if field.Type == schema.FieldTypeRelation {
+			if relationOptions, ok := field.Options.(*schema.RelationOptions); ok {
+				adminField.RelationCollection = relationOptions.CollectionId
+			}
+		}
+		tableFields = append(tableFields, adminField)
+		if adminField.Editable {
+			formFields = append(formFields, adminField)
+		}
+	}
+
+	if collection.IsAuth() {
+		formFields = append(formFields,
+			AdminField{Name: "password", Type: "password", Editable: true, IsVirtual: true},
+			AdminField{Name: "passwordConfirm", Type: "password", Editable: true, IsVirtual: true},
+		)
+	}
+
+	tableFields = append(tableFields,
+		AdminField{Name: "created", Type: "date"},
+		AdminField{Name: "updated", Type: "date"},
+	)
+
+	return tableFields, formFields
+}
+
+func adminCellValue(record *models.Record, field AdminField, relationLabels map[string]string) string {
+	switch field.Name {
+	case "id":
+		return record.Id
+	case "created", "updated":
+		return record.GetString(field.Name)
+	default:
+		if field.Type == schema.FieldTypeRelation {
+			return formatRelationValue(record.Get(field.Name), relationLabels, field.Multiple)
+		}
+		return formatAdminValue(record.Get(field.Name))
+	}
+}
+
+func parseAdminForm(c echo.Context, fields []AdminField) AdminFormState {
+	result := defaultFormState(fields)
+	for _, field := range fields {
+		formKey := "field_" + field.Name
+		if field.Type == "bool" {
+			result.Bools[field.Name] = strings.EqualFold(strings.TrimSpace(c.FormValue(formKey)), "true")
+			continue
+		}
+		result.Text[field.Name] = strings.TrimSpace(c.FormValue(formKey))
+	}
+	return result
+}
+
+func applyFormToRecord(record *models.Record, collection *models.Collection, formFields []AdminField, form AdminFormState, isCreate bool) error {
+	for _, field := range formFields {
+		if !field.Editable || field.IsVirtual {
+			continue
+		}
+
+		switch field.Type {
+		case "bool":
+			record.Set(field.Name, form.Bools[field.Name])
+		case "select", "relation", "file":
+			if field.Multiple {
+				record.Set(field.Name, splitCSVValues(form.Text[field.Name]))
+			} else {
+				record.Set(field.Name, form.Text[field.Name])
+			}
+		case "number":
+			numberText := strings.TrimSpace(form.Text[field.Name])
+			if numberText == "" {
+				record.Set(field.Name, "")
+				continue
+			}
+			numberValue, err := strconv.ParseFloat(numberText, 64)
+			if err != nil {
+				return fmt.Errorf("%s must be a valid number", field.Name)
+			}
+			record.Set(field.Name, numberValue)
+		default:
+			record.Set(field.Name, form.Text[field.Name])
+		}
+	}
+
+	if collection.IsAuth() {
+		password := strings.TrimSpace(form.Text["password"])
+		passwordConfirm := strings.TrimSpace(form.Text["passwordConfirm"])
+
+		if isCreate && password == "" {
+			return fmt.Errorf("password is required for auth records")
+		}
+		if password != "" || passwordConfirm != "" {
+			if password != passwordConfirm {
+				return fmt.Errorf("password and confirmation must match")
+			}
+			if err := record.SetPassword(password); err != nil {
+				return err
+			}
+		}
+
+		if strings.TrimSpace(record.GetString("username")) == "" {
+			email := strings.TrimSpace(record.GetString("email"))
+			if email == "" {
+				return fmt.Errorf("email is required")
+			}
+			record.Set("username", authUsernameFromEmail(email))
+		}
+	}
+
+	return nil
+}
+
+func defaultFormState(fields []AdminField) AdminFormState {
+	result := AdminFormState{
+		Text:  map[string]string{},
+		Bools: map[string]bool{},
+	}
+	for _, field := range fields {
+		if field.Type == "bool" {
+			result.Bools[field.Name] = false
+			continue
+		}
+		result.Text[field.Name] = ""
+	}
+	return result
+}
+
+func formStateFromRecord(record *models.Record, fields []AdminField) AdminFormState {
+	result := defaultFormState(fields)
+	for _, field := range fields {
+		if field.IsVirtual {
+			continue
+		}
+		if field.Type == "bool" {
+			result.Bools[field.Name] = record.GetBool(field.Name)
+			continue
+		}
+		if field.Multiple {
+			result.Text[field.Name] = strings.Join(splitCSVValues(formatAdminValue(record.Get(field.Name))), ", ")
+			continue
+		}
+		result.Text[field.Name] = formatAdminValue(record.Get(field.Name))
+	}
+	return result
+}
+
+func formatAdminValue(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case []string:
+		return strings.Join(typed, ", ")
+	case []any:
+		values := make([]string, 0, len(typed))
+		for _, item := range typed {
+			values = append(values, fmt.Sprintf("%v", item))
+		}
+		return strings.Join(values, ", ")
+	default:
+		return fmt.Sprintf("%v", typed)
+	}
+}
+
+func formatRelationValue(value any, relationLabels map[string]string, multiple bool) string {
+	if multiple {
+		ids := normalizeStringSlice(value)
+		labels := make([]string, 0, len(ids))
+		for _, id := range ids {
+			labels = append(labels, relationLabelForID(id, relationLabels))
+		}
+		return strings.Join(labels, ", ")
+	}
+
+	id := strings.TrimSpace(formatAdminValue(value))
+	if id == "" {
+		return ""
+	}
+	return relationLabelForID(id, relationLabels)
+}
+
+func relationLabelForID(id string, relationLabels map[string]string) string {
+	if relationLabels == nil {
+		return id
+	}
+	if label, ok := relationLabels[id]; ok && label != "" {
+		return label
+	}
+	return id
+}
+
+func normalizeStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				result = append(result, item)
+			}
+		}
+		return result
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			id := strings.TrimSpace(fmt.Sprintf("%v", item))
+			if id != "" {
+				result = append(result, id)
+			}
+		}
+		return result
+	default:
+		raw := strings.TrimSpace(fmt.Sprintf("%v", value))
+		if raw == "" || raw == "<nil>" {
+			return nil
+		}
+		return []string{raw}
+	}
+}
+
+func relationDataForCollection(
+	app core.App,
+	collection *models.Collection,
+	fields []AdminField,
+) (map[string]map[string]string, map[string][]AdminSelectOption, error) {
+	labelMaps := map[string]map[string]string{}
+	selectOptions := map[string][]AdminSelectOption{}
+
+	for _, field := range fields {
+		if field.Type != schema.FieldTypeRelation {
+			continue
+		}
+
+		schemaField := collection.Schema.GetFieldByName(field.Name)
+		if schemaField == nil {
+			continue
+		}
+		if err := schemaField.InitOptions(); err != nil {
+			return nil, nil, err
+		}
+		relationOptions, ok := schemaField.Options.(*schema.RelationOptions)
+		if !ok {
+			continue
+		}
+
+		relatedCollection, err := app.Dao().FindCollectionByNameOrId(relationOptions.CollectionId)
+		if err != nil {
+			return nil, nil, err
+		}
+		relatedRecords, err := app.Dao().FindRecordsByExpr(relatedCollection.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		fieldLabels := make(map[string]string, len(relatedRecords))
+		options := make([]AdminSelectOption, 0, len(relatedRecords))
+		for _, relatedRecord := range relatedRecords {
+			label, err := relationRecordLabel(app, relatedCollection, relatedRecord)
+			if err != nil {
+				return nil, nil, err
+			}
+			fieldLabels[relatedRecord.Id] = label
+			options = append(options, AdminSelectOption{
+				Value: relatedRecord.Id,
+				Label: label,
+			})
+		}
+
+		sort.Slice(options, func(i, j int) bool {
+			return strings.ToLower(options[i].Label) < strings.ToLower(options[j].Label)
+		})
+
+		labelMaps[field.Name] = fieldLabels
+		selectOptions[field.Name] = options
+	}
+
+	return labelMaps, selectOptions, nil
+}
+
+func relationRecordLabel(app core.App, relatedCollection *models.Collection, record *models.Record) (string, error) {
+	if relatedCollection.Name == "quiz_dates" {
+		scheduledAtRaw := strings.TrimSpace(record.GetString("scheduled_at"))
+		scheduledAtLabel := scheduledAtRaw
+		if scheduledAtRaw != "" {
+			when, err := parseDateTime(scheduledAtRaw)
+			if err == nil {
+				scheduledAtLabel = when.Format("2006-01-02 15:04")
+			}
+		}
+
+		locationLabel := record.GetString("location")
+		locationID := strings.TrimSpace(locationLabel)
+		if locationID != "" {
+			locationRecord, err := app.Dao().FindRecordById("locations", locationID)
+			if err != nil {
+				return "", err
+			}
+			locationName := strings.TrimSpace(locationRecord.GetString("name"))
+			if locationName != "" {
+				locationLabel = locationName
+			}
+		}
+
+		if scheduledAtLabel != "" && locationLabel != "" {
+			return scheduledAtLabel + " - " + locationLabel, nil
+		}
+		if scheduledAtLabel != "" {
+			return scheduledAtLabel, nil
+		}
+		if locationLabel != "" {
+			return locationLabel, nil
+		}
+		return record.Id, nil
+	}
+
+	for _, key := range []string{"name", "title", "team_name", "username", "email"} {
+		value := strings.TrimSpace(record.GetString(key))
+		if value != "" {
+			return value, nil
+		}
+	}
+	return record.Id, nil
+}
+
+func splitCSVValues(raw string) []string {
+	raw = strings.ReplaceAll(raw, "\n", ",")
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		values = append(values, value)
+	}
+	return values
+}
+
+func authUsernameFromEmail(email string) string {
+	prefix := strings.TrimSpace(strings.Split(email, "@")[0])
+	prefix = strings.ReplaceAll(prefix, " ", "_")
+	if prefix == "" {
+		return "quiz_admin"
+	}
+	return prefix
+}
+
+func redirectWithMessage(c echo.Context, collectionName, successMessage, errorMessage string) error {
+	redirectURL := "/quiz-admin/collections/" + url.PathEscape(collectionName)
+	params := url.Values{}
+	if successMessage != "" {
+		params.Set("success", successMessage)
+	}
+	if errorMessage != "" {
+		params.Set("error", errorMessage)
+	}
+	if encoded := params.Encode(); encoded != "" {
+		redirectURL += "?" + encoded
+	}
+	return c.Redirect(http.StatusSeeOther, redirectURL)
+}

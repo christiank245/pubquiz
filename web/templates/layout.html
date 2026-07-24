@@ -10,13 +10,31 @@
 </head>
 <body class="bg-slate-100 text-slate-900">
   <header class="bg-slate-900 text-white">
-    <div class="mx-auto max-w-5xl px-4 py-6">
-      <h1 class="text-2xl font-bold">Pub Quiz Signup</h1>
-      <p class="mt-1 text-sm text-slate-300">Pick a date and register your team.</p>
-      <a class="mt-3 inline-block text-sm text-cyan-300 underline" href="/_/">Admin (PocketBase)</a>
+    <div class="{{if .IsQuizAdmin}}w-full px-6{{else}}mx-auto max-w-5xl px-4{{end}} py-6">
+      {{if .IsQuizAdmin}}
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h1 class="text-2xl font-bold">Quiz Admin</h1>
+            <p class="mt-1 text-sm text-slate-300">Manage quiz data across collections.</p>
+            <a class="mt-3 inline-block text-sm text-cyan-300 underline" href="/">Public website</a>
+          </div>
+          {{if .ShowQuizAdminLogout}}
+            <form method="post" action="/quiz-admin/logout">
+              <button class="rounded-md border border-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800" type="submit">Logout</button>
+            </form>
+          {{end}}
+        </div>
+      {{else}}
+        <h1 class="text-2xl font-bold">Pub Quiz Signup</h1>
+        <p class="mt-1 text-sm text-slate-300">Pick a date and register your team.</p>
+        <div class="mt-3 flex gap-3 text-sm">
+          <a class="text-cyan-300 underline" href="/quiz-admin">Quiz Admin</a>
+          <a class="text-cyan-300 underline" href="/_/">System Admin (PocketBase)</a>
+        </div>
+      {{end}}
     </div>
   </header>
-  <main class="mx-auto max-w-5xl px-4 py-8">
+  <main class="{{if .IsQuizAdmin}}w-full px-6{{else}}mx-auto max-w-5xl px-4{{end}} py-8">
 {{end}}
 
 {{define "layout_end"}}
