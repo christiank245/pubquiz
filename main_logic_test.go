@@ -69,4 +69,102 @@ var _ = Describe("registration and quiz helpers", func() {
 			Expect(hasEmptyValues([]string{"ok", "still-ok"})).To(BeFalse())
 		})
 	})
+
+	Describe("parseMergeConsent", func() {
+		It("accepts yes", func() {
+			merge, err := parseMergeConsent("yes")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(merge).To(BeTrue())
+		})
+
+		It("accepts no", func() {
+			merge, err := parseMergeConsent("no")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(merge).To(BeFalse())
+		})
+
+		It("accepts case and whitespace variants", func() {
+			merge, err := parseMergeConsent("  YeS ")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(merge).To(BeTrue())
+		})
+
+		It("rejects invalid values", func() {
+			_, err := parseMergeConsent("maybe")
+			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Describe("normalizeRegistrationIDs", func() {
+		It("trims and de-duplicates while preserving order", func() {
+			ids, err := normalizeRegistrationIDs([]string{" a ", "b", "a", "", " b "})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ids).To(Equal([]string{"a", "b"}))
+		})
+
+		It("requires at least two unique ids", func() {
+			_, err := normalizeRegistrationIDs([]string{" one ", "one"})
+			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Describe("parseRegistrationIDsInput", func() {
+		It("parses IDs from mixed separators", func() {
+			ids, err := parseRegistrationIDsInput("id-1, id-2\nid-3\tid-2")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ids).To(Equal([]string{"id-1", "id-2", "id-3"}))
+		})
+	})
+
+	Describe("parseOptionalMergeBool", func() {
+		It("returns nil for auto", func() {
+			value, err := parseOptionalMergeBool("auto")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(value).To(BeNil())
+		})
+
+		It("parses true and false", func() {
+			trueValue, err := parseOptionalMergeBool("true")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(trueValue).NotTo(BeNil())
+			Expect(*trueValue).To(BeTrue())
+
+			falseValue, err := parseOptionalMergeBool("false")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(falseValue).NotTo(BeNil())
+			Expect(*falseValue).To(BeFalse())
+		})
+
+		It("rejects invalid values", func() {
+			_, err := parseOptionalMergeBool("yes")
+			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Describe("sanitizeAdminRedirect", func() {
+		It("keeps safe relative paths", func() {
+			Expect(sanitizeAdminRedirect("/admin/registrations/merge")).To(Equal("/admin/registrations/merge"))
+		})
+
+		It("falls back on empty or unsafe values", func() {
+			Expect(sanitizeAdminRedirect("")).To(Equal("/admin/registrations/merge"))
+			Expect(sanitizeAdminRedirect("https://example.com")).To(Equal("/admin/registrations/merge"))
+			Expect(sanitizeAdminRedirect("//evil.example.com")).To(Equal("/admin/registrations/merge"))
+		})
+	})
+
+	Describe("quizIDExists", func() {
+		quizzes := []QuizCard{
+			{ID: "quiz-a"},
+			{ID: "quiz-b"},
+		}
+
+		It("returns true for existing quiz ids", func() {
+			Expect(quizIDExists(quizzes, "quiz-a")).To(BeTrue())
+		})
+
+		It("returns false for unknown quiz ids", func() {
+			Expect(quizIDExists(quizzes, "quiz-c")).To(BeFalse())
+		})
+	})
 })

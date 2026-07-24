@@ -19,6 +19,7 @@ PocketBase-powered pub quiz registration website using:
   - max 10 people per team
   - for larger groups, users are asked to confirm an automatic split into evenly distributed teams (all teams <= 10)
   - users can set custom team names for each split team before confirming
+  - for teams smaller than 4, users are asked whether they are willing to be merged with another team
 - Hidden unregister flow via direct endpoint:
   - `GET /unregister?id=<registrationId>` (confirmation page)
   - `POST /unregister` with `registration_id` (removes registration)
@@ -26,7 +27,15 @@ PocketBase-powered pub quiz registration website using:
 - Admin data management via PocketBase Admin UI (`/_/`):
   - `locations` (name, maps_url, capacity)
   - `quiz_dates` (scheduled_at, location, is_open)
-  - `registrations` (quiz, email, team_name, team_size)
+  - `registrations` (quiz, email, team_name, team_size, willing_to_merge)
+  - Admin login UI for merge tools: `GET /admin/login`
+  - Admin merge UI: `GET /admin/registrations/merge` (admin auth required)
+    - choose an upcoming event from a dropdown
+    - select teams with `willing_to_merge = true` from the event table
+    - optionally provide a new merged team name
+  - Admin merge endpoint for combining registrations in the same quiz:
+    - `POST /api/admin/registrations/merge` (requires admin auth token)
+    - body: `registration_ids` (2+), optional `team_name`, `email`, `willing_to_merge`
 
 ## Quick start
 

@@ -1,0 +1,23 @@
+{{define "admin_login"}}
+<section class="mx-auto max-w-lg rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+  <h2 class="text-xl font-semibold">Admin login</h2>
+  <p class="mt-2 text-sm text-slate-600">Sign in to access admin merge tools.</p>
+
+  {{if .AdminLogin.Error}}
+    <div class="mt-4 rounded-md border border-red-300 bg-red-50 p-3 text-red-800">{{.AdminLogin.Error}}</div>
+  {{end}}
+
+  <form class="mt-4 grid gap-3" method="post" action="/admin/login">
+    <input type="hidden" name="redirect" value="{{.AdminLogin.Redirect}}" />
+    <label class="grid gap-1 text-sm">
+      <span>Email</span>
+      <input class="rounded-md border border-slate-300 px-3 py-2" type="email" name="email" required value="{{.AdminLogin.Email}}" />
+    </label>
+    <label class="grid gap-1 text-sm">
+      <span>Password</span>
+      <input class="rounded-md border border-slate-300 px-3 py-2" type="password" name="password" required />
+    </label>
+    <button class="mt-1 rounded-md bg-cyan-700 px-4 py-2 text-white hover:bg-cyan-800" type="submit">Sign in</button>
+  </form>
+</section>
+{{end}}
