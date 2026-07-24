@@ -143,6 +143,7 @@ If the user chooses to wrap up the session:
 - If migrating Tailwind major versions (e.g., v3 -> v4), explicitly update Tailwind config/input syntax and verify generated CSS includes expected base/utilities before closing the task.
 - When using `gh` CLI commands with `--body` or other string arguments via shell, avoid Markdown backticks in inline command strings (bash executes them). Use plain text or escape backticks.
 - Pull request descriptions must not include a standalone "Verification" section, because CI already runs the canonical checks.
+- Always write pull request descriptions in Markdown structure (for example: headings, bullet lists, and notes sections).
 
 Provide a `Makefile` containing at least the following standard targets:
 
