@@ -34,6 +34,7 @@ PocketBase-powered pub quiz registration website using:
    ```bash
    make deps
    ```
+   This installs Tailwind via `mise` (no Node.js required).
 2. Build CSS:
    ```bash
    make css
