@@ -87,9 +87,10 @@ func init() {
 				Type:     schema.FieldTypeRelation,
 				Required: true,
 				Options: &schema.RelationOptions{
-					CollectionId: quizDates.Id,
-					MinSelect:    types.Pointer(1),
-					MaxSelect:    types.Pointer(1),
+					CollectionId:  quizDates.Id,
+					CascadeDelete: true,
+					MinSelect:     types.Pointer(1),
+					MaxSelect:     types.Pointer(1),
 				},
 			},
 			&schema.SchemaField{
