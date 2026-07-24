@@ -94,12 +94,6 @@ type PageData struct {
 	Admin               AdminPageData
 }
 
-type MergeRegistrationsRequest struct {
-	RegistrationIDs []string `json:"registration_ids"`
-	TeamName        string   `json:"team_name"`
-	Email           string   `json:"email"`
-}
-
 type mergeRequestError struct {
 	message string
 }
@@ -350,54 +344,6 @@ func main() {
 					Title:        "Unregister Team",
 					PageTemplate: "unregister",
 					Unregister:   unregisterData,
-				})
-			},
-		})
-
-		e.Router.AddRoute(echo.Route{
-			Method:      http.MethodPost,
-			Path:        "/api/admin/registrations/merge",
-			Middlewares: []echo.MiddlewareFunc{apis.RequireAdminAuth()},
-			Handler: func(c echo.Context) error {
-				var payload MergeRegistrationsRequest
-				if err := c.Bind(&payload); err != nil {
-					return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
-				}
-
-				registrationIDs, err := normalizeRegistrationIDs(payload.RegistrationIDs)
-				if err != nil {
-					return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-				}
-
-				col, err := app.Dao().FindCollectionByNameOrId("registrations")
-				if err != nil {
-					return echo.NewHTTPError(http.StatusInternalServerError, "registrations collection is missing")
-				}
-
-				mergedRecord, err := mergeRegistrations(
-					app.Dao(),
-					col,
-					registrationIDs,
-					payload.TeamName,
-					payload.Email,
-				)
-				if err != nil {
-					var reqErr mergeRequestError
-					if errors.As(err, &reqErr) {
-						return echo.NewHTTPError(http.StatusBadRequest, reqErr.Error())
-					}
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to merge registrations")
-				}
-
-				return c.JSON(http.StatusOK, map[string]any{
-					"message":                "Registrations merged successfully.",
-					"merged_registration_id": mergedRecord.Id,
-					"quiz_id":                mergedRecord.GetString("quiz"),
-					"team_name":              mergedRecord.GetString("team_name"),
-					"team_size":              mergedRecord.GetInt("team_size"),
-					"email":                  mergedRecord.GetString("email"),
-					"willing_to_merge":       mergedRecord.GetBool("willing_to_merge"),
-					"merged_from_ids":        registrationIDs,
 				})
 			},
 		})
@@ -719,12 +665,17 @@ func mergeRegistrations(
 	mergedQuizID := records[0].GetString("quiz")
 	mergedTeamSize := 0
 	teamNames := make([]string, 0, len(records))
-	mergedWillingToMerge := false
 
 	for _, rec := range records {
 		quizID := rec.GetString("quiz")
+		if strings.TrimSpace(quizID) == "" {
+			return nil, mergeRequestError{message: "all registrations must have a quiz id"}
+		}
 		if quizID != mergedQuizID {
 			return nil, mergeRequestError{message: "all registrations must belong to the same quiz"}
+		}
+		if !rec.GetBool("willing_to_merge") {
+			return nil, mergeRequestError{message: "all selected registrations must have willing_to_merge set to true"}
 		}
 
 		mergedTeamSize += rec.GetInt("team_size")
@@ -751,7 +702,7 @@ func mergeRegistrations(
 		mergedRecord.Set("email", mergedEmail)
 		mergedRecord.Set("team_name", mergedTeamName)
 		mergedRecord.Set("team_size", mergedTeamSize)
-		mergedRecord.Set("willing_to_merge", mergedWillingToMerge)
+		mergedRecord.Set("willing_to_merge", false)
 
 		if err := txDao.SaveRecord(mergedRecord); err != nil {
 			return err

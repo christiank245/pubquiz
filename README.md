@@ -35,14 +35,10 @@ PocketBase-powered pub quiz registration website using:
   - create modal
   - edit modal via clickable row IDs (record id is read-only)
   - bulk delete via row checkboxes
-  - Admin login UI for merge tools: `GET /admin/login`
-  - Admin merge UI: `GET /admin/registrations/merge` (admin auth required)
-    - choose an upcoming event from a dropdown
-    - select teams with `willing_to_merge = true` from the event table
-    - optionally provide a new merged team name
-  - Admin merge endpoint for combining registrations in the same quiz:
-    - `POST /api/admin/registrations/merge` (requires admin auth token)
-    - body: `registration_ids` (2+), optional `team_name`, `email`, `willing_to_merge`
+  - registrations table supports in-place merge:
+    - select 2+ entries from the same quiz with `willing_to_merge = true`
+    - click **Merge entries**
+    - optionally provide a new merged team name and email in the modal
 
 ## Quick start
 

@@ -64,13 +64,5 @@ var _ = Describe("admin.go helpers", func() {
 			Expect(normalizeStringSlice(nil)).To(BeNil())
 		})
 
-		It("parses record date-time values", func() {
-			when, ok := recordDateTime("2026-08-05T19:30:00Z")
-			Expect(ok).To(BeTrue())
-			Expect(when.IsZero()).To(BeFalse())
-
-			_, ok = recordDateTime("invalid")
-			Expect(ok).To(BeFalse())
-		})
 	})
 })
