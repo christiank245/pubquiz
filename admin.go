@@ -236,14 +236,6 @@ func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
 			return redirectWithMessage(c, "registrations", "", err.Error())
 		}
 
-		if err := validateMergeCandidates(app, registrationIDs); err != nil {
-			var reqErr mergeRequestError
-			if errors.As(err, &reqErr) {
-				return redirectWithMessage(c, "registrations", "", reqErr.Error())
-			}
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to validate merge candidates")
-		}
-
 		col, err := app.Dao().FindCollectionByNameOrId("registrations")
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "registrations collection is missing")
@@ -385,39 +377,6 @@ func deleteRegistrationsForQuizDate(app core.App, quizDateID string) error {
 	return nil
 }
 
-func validateMergeCandidates(app core.App, registrationIDs []string) error {
-	if len(registrationIDs) < 2 {
-		return mergeRequestError{message: "at least two unique registration ids are required"}
-	}
-
-	baseQuizID := ""
-	for _, registrationID := range registrationIDs {
-		record, err := app.Dao().FindRecordById("registrations", registrationID)
-		if err != nil {
-			return mergeRequestError{message: fmt.Sprintf("registration not found: %s", registrationID)}
-		}
-
-		if !record.GetBool("willing_to_merge") {
-			return mergeRequestError{message: "all selected registrations must have willing_to_merge set to true"}
-		}
-
-		quizID := strings.TrimSpace(record.GetString("quiz"))
-		if quizID == "" {
-			return mergeRequestError{message: fmt.Sprintf("registration %s has no quiz id", registrationID)}
-		}
-
-		if baseQuizID == "" {
-			baseQuizID = quizID
-			continue
-		}
-		if quizID != baseQuizID {
-			return mergeRequestError{message: "all selected registrations must belong to the same quiz"}
-		}
-	}
-
-	return nil
-}
-
 func managedCollections(app core.App) ([]*models.Collection, error) {
 	all := []*models.Collection{}
 	if err := app.Dao().CollectionQuery().OrderBy("name ASC").All(&all); err != nil {
@@ -462,11 +421,10 @@ func buildAdminPageData(app core.App, collectionName, successMessage, errorMessa
 		return AdminPageData{}, echo.NewHTTPError(http.StatusInternalServerError, "failed to load relation data")
 	}
 
-	records, err := app.Dao().FindRecordsByExpr(collection.Name)
+	records, err := loadAdminRecords(app, collection.Name)
 	if err != nil {
 		return AdminPageData{}, echo.NewHTTPError(http.StatusInternalServerError, "failed to load records")
 	}
-	sortAdminRecordsByDate(app, collection.Name, records)
 
 	rows := make([]AdminRow, 0, len(records))
 	registrationMergeRows := map[string]AdminRegistrationMergeRow{}
@@ -522,92 +480,27 @@ func buildAdminPageData(app core.App, collectionName, successMessage, errorMessa
 	}, nil
 }
 
-func sortAdminRecordsByDate(app core.App, collectionName string, records []*models.Record) {
+func loadAdminRecords(app core.App, collectionName string) ([]*models.Record, error) {
 	switch collectionName {
 	case "quiz_dates":
-		sort.SliceStable(records, func(i, j int) bool {
-			iWhen, iHasDate := recordDateTime(records[i].GetString("scheduled_at"))
-			jWhen, jHasDate := recordDateTime(records[j].GetString("scheduled_at"))
-			if iHasDate && jHasDate {
-				if iWhen.Equal(jWhen) {
-					return records[i].Id < records[j].Id
-				}
-				return iWhen.Before(jWhen)
-			}
-			if iHasDate != jHasDate {
-				return iHasDate
-			}
-			return records[i].Id < records[j].Id
-		})
+		records := []*models.Record{}
+		err := app.Dao().
+			RecordQuery(collectionName).
+			OrderBy("scheduled_at ASC", "id ASC").
+			All(&records)
+		return records, err
 	case "registrations":
-		quizDateCache := map[string]registrationQuizDateCacheEntry{}
-
-		sort.SliceStable(records, func(i, j int) bool {
-			iWhen, iHasDate := registrationQuizDate(app, records[i], quizDateCache)
-			jWhen, jHasDate := registrationQuizDate(app, records[j], quizDateCache)
-			if iHasDate && jHasDate {
-				if iWhen.Equal(jWhen) {
-					return records[i].Id < records[j].Id
-				}
-				return iWhen.Before(jWhen)
-			}
-			if iHasDate != jHasDate {
-				return iHasDate
-			}
-			return records[i].Id < records[j].Id
-		})
+		records := []*models.Record{}
+		err := app.Dao().
+			RecordQuery(collectionName).
+			Select("registrations.*").
+			LeftJoin("quiz_dates", dbx.NewExp("quiz_dates.id = registrations.quiz")).
+			OrderBy("quiz_dates.scheduled_at ASC", "registrations.id ASC").
+			All(&records)
+		return records, err
 	default:
-		sort.SliceStable(records, func(i, j int) bool {
-			return records[i].Id < records[j].Id
-		})
+		return app.Dao().FindRecordsByExpr(collectionName)
 	}
-}
-
-type registrationQuizDateCacheEntry struct {
-	when    time.Time
-	hasDate bool
-	loaded  bool
-}
-
-func registrationQuizDate(
-	app core.App,
-	record *models.Record,
-	quizDateCache map[string]registrationQuizDateCacheEntry,
-) (time.Time, bool) {
-	quizID := strings.TrimSpace(record.GetString("quiz"))
-	if quizID == "" {
-		return time.Time{}, false
-	}
-
-	if cached, ok := quizDateCache[quizID]; ok && cached.loaded {
-		return cached.when, cached.hasDate
-	}
-
-	quizRecord, err := app.Dao().FindRecordById("quiz_dates", quizID)
-	if err != nil {
-		quizDateCache[quizID] = registrationQuizDateCacheEntry{loaded: true}
-		return time.Time{}, false
-	}
-
-	when, hasDate := recordDateTime(quizRecord.GetString("scheduled_at"))
-	quizDateCache[quizID] = registrationQuizDateCacheEntry{
-		when:    when,
-		hasDate: hasDate,
-		loaded:  true,
-	}
-	return when, hasDate
-}
-
-func recordDateTime(raw string) (time.Time, bool) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return time.Time{}, false
-	}
-	when, err := parseDateTime(raw)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return when, true
 }
 
 func renderAdminPageWithFormError(
