@@ -2,29 +2,31 @@ name: PR
 
 on:
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
-
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.25.6'
-        
-    - uses: jdx/mise-action@v4
-      with:
-        cache: true  
-    
-    - name: Install dependencies
-      run: make deps
-    
-    - name: Build
-      run: make build
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.25.6"
 
-    - name: Test
-      run: make test
+      - uses: jdx/mise-action@v4
+        with:
+          cache: true
+
+      - name: Install dependencies
+        run: make deps
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+      - name: Test e2e
+        run: make test-e2e

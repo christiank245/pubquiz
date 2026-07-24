@@ -73,6 +73,12 @@ make test
 
 Test stack: Ginkgo + Gomega.
 
+Browser E2E tests (Playwright-Go):
+
+```bash
+make test-e2e
+```
+
 ## Build single binary (embedded templates + static assets)
 
 ```bash
