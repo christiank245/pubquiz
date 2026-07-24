@@ -18,7 +18,7 @@ build: css
 	CGO_ENABLED=0 go build -o $(BIN_DIR)/$(APP_NAME) .
 
 test:
-	go test ./...
+	go tool ginkgo -r ./...
 
 clean:
 	rm -rf $(BIN_DIR)
