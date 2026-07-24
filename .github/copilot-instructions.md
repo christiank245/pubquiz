@@ -105,6 +105,12 @@ If the user chooses to wrap up the session:
 - **Reusable Components:** Organize Go templates logically into modular components (e.g., `header.html`, `quiz_card.html`, `registration_modal.html`).
 - **HTMX Interactivity:** Use HTMX attributes (`hx-get`, `hx-post`, `hx-target`, `hx-swap`) for interactive updates (e.g., submitting registrations, opening modals, dynamic UI state changes).
 - **Single Binary Packaging:** Utilize Go's `embed` package to embed templates and static Tailwind assets directly into the Go binary so the application runs standalone.
+- **Quiz Admin UI Defaults:**
+  - Hide system and auth collections from Quiz Admin navigation.
+  - Use full-width layout for Quiz Admin pages.
+  - Prefer human-readable relation labels (never raw relation IDs in overview tables when resolvable).
+  - Use dropdowns for single relation fields.
+  - Make table rows clickable to open edit modal; keep destructive actions explicit via separate controls (checkbox + delete button).
 
 ---
 
