@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -75,6 +76,25 @@ type AdminRegistrationMergeRow struct {
 	TeamSize       int
 	Email          string
 	WillingToMerge bool
+}
+
+type AdminMergeButtonData struct {
+	Enabled bool
+}
+
+type AdminMergeModalEntry struct {
+	ID       string
+	TeamName string
+	TeamSize int
+	Email    string
+}
+
+type AdminMergeModalData struct {
+	Show            bool
+	Summary         string
+	RegistrationIDs string
+	Entries         []AdminMergeModalEntry
+	Error           string
 }
 
 func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
@@ -262,6 +282,47 @@ func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
 			fmt.Sprintf("Entries merged successfully into \"%s\".", mergedRecord.GetString("team_name")),
 			"",
 		)
+	})
+
+	router.POST("/quiz-admin/collections/registrations/merge/button", func(c echo.Context) error {
+		if _, err := requireQuizAdmin(c, app); err != nil {
+			return err
+		}
+		if err := c.Request().ParseForm(); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid form data")
+		}
+
+		selection, err := buildRegistrationMergeSelection(app, c.Request().Form["delete_ids"])
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to evaluate merge selection")
+		}
+
+		return renderAdminTemplate(c, "admin_merge_entries_button", AdminMergeButtonData{
+			Enabled: selection.Error == "" && len(selection.Entries) >= 2,
+		})
+	})
+
+	router.POST("/quiz-admin/collections/registrations/merge/modal", func(c echo.Context) error {
+		if _, err := requireQuizAdmin(c, app); err != nil {
+			return err
+		}
+		if err := c.Request().ParseForm(); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid form data")
+		}
+
+		selection, err := buildRegistrationMergeSelection(app, c.Request().Form["delete_ids"])
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to build merge preview")
+		}
+
+		return renderAdminTemplate(c, "admin_merge_entries_modal", selection)
+	})
+
+	router.POST("/quiz-admin/collections/registrations/merge/modal/close", func(c echo.Context) error {
+		if _, err := requireQuizAdmin(c, app); err != nil {
+			return err
+		}
+		return c.HTML(http.StatusOK, "")
 	})
 
 	router.POST("/quiz-admin/collections/:name/delete", func(c echo.Context) error {
@@ -878,6 +939,7 @@ func relationRecordLabel(app core.App, relatedCollection *models.Collection, rec
 			if err != nil {
 				return "", err
 			}
+
 			locationName := strings.TrimSpace(locationRecord.GetString("name"))
 			if locationName != "" {
 				locationLabel = locationName
@@ -903,6 +965,93 @@ func relationRecordLabel(app core.App, relatedCollection *models.Collection, rec
 		}
 	}
 	return record.Id, nil
+}
+
+func renderAdminTemplate(c echo.Context, templateName string, data any) error {
+	var buf bytes.Buffer
+	if err := tpl.ExecuteTemplate(&buf, templateName, data); err != nil {
+		return err
+	}
+	return c.HTML(http.StatusOK, buf.String())
+}
+
+func buildRegistrationMergeSelection(app core.App, selectedIDs []string) (AdminMergeModalData, error) {
+	normalizedIDs, err := normalizeRegistrationIDs(selectedIDs)
+	if err != nil {
+		return AdminMergeModalData{
+			Show:  true,
+			Error: err.Error(),
+		}, nil
+	}
+
+	quizDatesCollection, err := app.Dao().FindCollectionByNameOrId("quiz_dates")
+	if err != nil {
+		return AdminMergeModalData{}, err
+	}
+
+	entries := make([]AdminMergeModalEntry, 0, len(normalizedIDs))
+	quizLabels := map[string]string{}
+	firstQuizID := ""
+	firstQuizLabel := ""
+
+	for _, registrationID := range normalizedIDs {
+		record, err := app.Dao().FindRecordById("registrations", registrationID)
+		if err != nil {
+			return AdminMergeModalData{}, err
+		}
+
+		quizID := strings.TrimSpace(record.GetString("quiz"))
+		if quizID == "" {
+			return AdminMergeModalData{
+				Show:  true,
+				Error: "all selected registrations must have a quiz id",
+			}, nil
+		}
+		if !record.GetBool("willing_to_merge") {
+			return AdminMergeModalData{
+				Show:  true,
+				Error: "all selected registrations must have willing_to_merge set to true",
+			}, nil
+		}
+
+		quizLabel, ok := quizLabels[quizID]
+		if !ok {
+			quizRecord, err := app.Dao().FindRecordById("quiz_dates", quizID)
+			if err != nil {
+				return AdminMergeModalData{}, err
+			}
+			quizLabel, err = relationRecordLabel(app, quizDatesCollection, quizRecord)
+			if err != nil {
+				return AdminMergeModalData{}, err
+			}
+			quizLabels[quizID] = quizLabel
+		}
+
+		if firstQuizID == "" {
+			firstQuizID = quizID
+			firstQuizLabel = quizLabel
+		}
+		if quizID != firstQuizID {
+			return AdminMergeModalData{
+				Show:  true,
+				Error: "all selected registrations must belong to the same quiz",
+			}, nil
+		}
+
+		entries = append(entries, AdminMergeModalEntry{
+			ID:       registrationID,
+			TeamName: strings.TrimSpace(record.GetString("team_name")),
+			TeamSize: record.GetInt("team_size"),
+			Email:    strings.TrimSpace(record.GetString("email")),
+		})
+	}
+
+	return AdminMergeModalData{
+		Show:            true,
+		Summary:         fmt.Sprintf("%d entries from %s will be merged.", len(entries), firstQuizLabel),
+		RegistrationIDs: strings.Join(normalizedIDs, ","),
+		Entries:         entries,
+	}, nil
 }
 
 func splitCSVValues(raw string) []string {

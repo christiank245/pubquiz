@@ -216,9 +216,11 @@ var _ = Describe("playwright e2e", Ordered, func() {
 		Expect(page.Locator(fmt.Sprintf(`tr:has-text("%s") input[name="delete_ids"]`, teamB)).First().Check()).To(Succeed())
 
 		mergeButton := page.Locator(`#merge-entries-button`)
-		disabled, err := mergeButton.IsDisabled()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(disabled).To(BeFalse())
+		Eventually(func() bool {
+			disabled, checkErr := mergeButton.IsDisabled()
+			Expect(checkErr).NotTo(HaveOccurred())
+			return disabled
+		}).Should(BeFalse())
 		Expect(mergeButton.Click()).To(Succeed())
 		Expect(page.Locator(`h3:has-text("Merge entries")`).First().WaitFor()).To(Succeed())
 
