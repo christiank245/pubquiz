@@ -46,13 +46,11 @@ type AdminCollectionNav struct {
 }
 
 type AdminField struct {
-	Name               string
-	Type               string
-	Editable           bool
-	Required           bool
-	Multiple           bool
-	IsVirtual          bool
-	RelationCollection string
+	Name     string
+	Type     string
+	Editable bool
+	Required bool
+	Multiple bool
 }
 
 type AdminRow struct {
@@ -182,7 +180,7 @@ func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
 		form := parseAdminForm(c, formFields)
 
 		record := models.NewRecord(collection)
-		if err := applyFormToRecord(record, collection, formFields, form, true); err != nil {
+		if err := applyFormToRecord(record, formFields, form); err != nil {
 			return renderAdminPageWithFormError(c, app, collection.Name, tableFields, formFields, true, false, "", form, err.Error())
 		}
 		if err := app.Dao().SaveRecord(record); err != nil {
@@ -218,7 +216,7 @@ func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
 		tableFields, formFields := adminFields(collection)
 		form := parseAdminForm(c, formFields)
 
-		if err := applyFormToRecord(record, collection, formFields, form, false); err != nil {
+		if err := applyFormToRecord(record, formFields, form); err != nil {
 			return renderAdminPageWithFormError(c, app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error())
 		}
 		if err := app.Dao().SaveRecord(record); err != nil {
@@ -257,7 +255,6 @@ func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
 			registrationIDs,
 			strings.TrimSpace(c.FormValue("team_name")),
 			strings.TrimSpace(c.FormValue("email")),
-			nil,
 		)
 		if err != nil {
 			var reqErr mergeRequestError
@@ -660,17 +657,6 @@ func adminFields(collection *models.Collection) ([]AdminField, []AdminField) {
 	tableFields := []AdminField{}
 	formFields := []AdminField{}
 
-	if collection.IsAuth() {
-		authBaseFields := []AdminField{
-			{Name: "username", Type: "text", Editable: true, Required: true},
-			{Name: "email", Type: "email", Editable: true, Required: true},
-			{Name: "emailVisibility", Type: "bool", Editable: true},
-			{Name: "verified", Type: "bool", Editable: true},
-		}
-		tableFields = append(tableFields, authBaseFields...)
-		formFields = append(formFields, authBaseFields...)
-	}
-
 	for _, field := range collection.Schema.Fields() {
 		if err := field.InitOptions(); err != nil {
 			continue
@@ -684,23 +670,10 @@ func adminFields(collection *models.Collection) ([]AdminField, []AdminField) {
 		if opt, ok := field.Options.(schema.MultiValuer); ok {
 			adminField.Multiple = opt.IsMultiple()
 		}
-		if field.Type == schema.FieldTypeRelation {
-			if relationOptions, ok := field.Options.(*schema.RelationOptions); ok {
-				adminField.RelationCollection = relationOptions.CollectionId
-			}
-		}
 		tableFields = append(tableFields, adminField)
 		if adminField.Editable {
 			formFields = append(formFields, adminField)
 		}
-	}
-
-	if collection.IsAuth() {
-		formFields = append(
-			formFields,
-			AdminField{Name: "password", Type: "password", Editable: true, IsVirtual: true},
-			AdminField{Name: "passwordConfirm", Type: "password", Editable: true, IsVirtual: true},
-		)
 	}
 
 	tableFields = append(
@@ -742,9 +715,9 @@ func parseAdminForm(c echo.Context, fields []AdminField) AdminFormState {
 	return result
 }
 
-func applyFormToRecord(record *models.Record, collection *models.Collection, formFields []AdminField, form AdminFormState, isCreate bool) error {
+func applyFormToRecord(record *models.Record, formFields []AdminField, form AdminFormState) error {
 	for _, field := range formFields {
-		if !field.Editable || field.IsVirtual {
+		if !field.Editable {
 			continue
 		}
 
@@ -779,31 +752,6 @@ func applyFormToRecord(record *models.Record, collection *models.Collection, for
 		}
 	}
 
-	if collection.IsAuth() {
-		password := strings.TrimSpace(form.Text["password"])
-		passwordConfirm := strings.TrimSpace(form.Text["passwordConfirm"])
-
-		if isCreate && password == "" {
-			return fmt.Errorf("password is required for auth records")
-		}
-		if password != "" || passwordConfirm != "" {
-			if password != passwordConfirm {
-				return fmt.Errorf("password and confirmation must match")
-			}
-			if err := record.SetPassword(password); err != nil {
-				return err
-			}
-		}
-
-		if strings.TrimSpace(record.GetString("username")) == "" {
-			email := strings.TrimSpace(record.GetString("email"))
-			if email == "" {
-				return fmt.Errorf("email is required")
-			}
-			record.Set("username", authUsernameFromEmail(email))
-		}
-	}
-
 	return nil
 }
 
@@ -825,9 +773,6 @@ func defaultFormState(fields []AdminField) AdminFormState {
 func formStateFromRecord(record *models.Record, fields []AdminField) AdminFormState {
 	result := defaultFormState(fields)
 	for _, field := range fields {
-		if field.IsVirtual {
-			continue
-		}
 		if field.Type == "bool" {
 			result.Bools[field.Name] = record.GetBool(field.Name)
 			continue
@@ -1079,15 +1024,6 @@ func splitCSVValues(raw string) []string {
 		values = append(values, value)
 	}
 	return values
-}
-
-func authUsernameFromEmail(email string) string {
-	prefix := strings.TrimSpace(strings.Split(email, "@")[0])
-	prefix = strings.ReplaceAll(prefix, " ", "_")
-	if prefix == "" {
-		return "quiz_admin"
-	}
-	return prefix
 }
 
 func redirectWithMessage(c echo.Context, collectionName, successMessage, errorMessage string) error {

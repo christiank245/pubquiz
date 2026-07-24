@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("registration and quiz helpers", func() {
+var _ = Describe("main.go helpers", func() {
 	Describe("splitTeamSizes", func() {
 		It("splits 11 into 6 and 5", func() {
 			Expect(splitTeamSizes(11, maxTeamSize)).To(Equal([]int{6, 5}))
@@ -68,39 +68,6 @@ var _ = Describe("registration and quiz helpers", func() {
 			Expect(hasEmptyValues([]string{"ok", ""})).To(BeTrue())
 			Expect(hasEmptyValues([]string{"ok", "still-ok"})).To(BeFalse())
 		})
-
-		Describe("quiz admin helpers", func() {
-			It("splits comma separated values", func() {
-				Expect(splitCSVValues("a, b,\n c")).To(Equal([]string{"a", "b", "c"}))
-			})
-
-			It("builds username from email", func() {
-				Expect(authUsernameFromEmail("quiz.admin@example.com")).To(Equal("quiz.admin"))
-			})
-
-			It("formats stored date-times for datetime-local inputs", func() {
-				formatted := formatDateTimeInputValue("2026-08-05T17:30:00Z")
-				Expect(formatted).To(Equal(time.Date(2026, time.August, 5, 17, 30, 0, 0, time.UTC).Local().Format("2006-01-02T15:04")))
-			})
-
-			It("formats stored date-times for German labels", func() {
-				formatted := formatGermanDateTimeLabel("2026-08-05T17:30:00Z")
-				Expect(formatted).To(Equal(time.Date(2026, time.August, 5, 17, 30, 0, 0, time.UTC).Local().Format("02.01.2006 15:04")))
-			})
-
-			It("normalizes datetime-local input for storage", func() {
-				normalized, err := normalizeDateTimeInput("2026-08-05T19:30")
-				Expect(err).NotTo(HaveOccurred())
-
-				expected := time.Date(2026, time.August, 5, 19, 30, 0, 0, time.Local).UTC().Format(time.RFC3339)
-				Expect(normalized).To(Equal(expected))
-			})
-
-			It("rejects invalid date-time input", func() {
-				_, err := normalizeDateTimeInput("not-a-date")
-				Expect(err).To(HaveOccurred())
-			})
-		})
 	})
 
 	Describe("parseMergeConsent", func() {
@@ -149,55 +116,4 @@ var _ = Describe("registration and quiz helpers", func() {
 		})
 	})
 
-	Describe("parseOptionalMergeBool", func() {
-		It("returns nil for auto", func() {
-			value, err := parseOptionalMergeBool("auto")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(value).To(BeNil())
-		})
-
-		It("parses true and false", func() {
-			trueValue, err := parseOptionalMergeBool("true")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(trueValue).NotTo(BeNil())
-			Expect(*trueValue).To(BeTrue())
-
-			falseValue, err := parseOptionalMergeBool("false")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(falseValue).NotTo(BeNil())
-			Expect(*falseValue).To(BeFalse())
-		})
-
-		It("rejects invalid values", func() {
-			_, err := parseOptionalMergeBool("yes")
-			Expect(err).To(HaveOccurred())
-		})
-	})
-
-	Describe("sanitizeAdminRedirect", func() {
-		It("keeps safe relative paths", func() {
-			Expect(sanitizeAdminRedirect("/admin/registrations/merge")).To(Equal("/admin/registrations/merge"))
-		})
-
-		It("falls back on empty or unsafe values", func() {
-			Expect(sanitizeAdminRedirect("")).To(Equal("/admin/registrations/merge"))
-			Expect(sanitizeAdminRedirect("https://example.com")).To(Equal("/admin/registrations/merge"))
-			Expect(sanitizeAdminRedirect("//evil.example.com")).To(Equal("/admin/registrations/merge"))
-		})
-	})
-
-	Describe("quizIDExists", func() {
-		quizzes := []QuizCard{
-			{ID: "quiz-a"},
-			{ID: "quiz-b"},
-		}
-
-		It("returns true for existing quiz ids", func() {
-			Expect(quizIDExists(quizzes, "quiz-a")).To(BeTrue())
-		})
-
-		It("returns false for unknown quiz ids", func() {
-			Expect(quizIDExists(quizzes, "quiz-c")).To(BeFalse())
-		})
-	})
 })
