@@ -141,6 +141,7 @@ If the user chooses to wrap up the session:
 
 - When managing Tailwind via `mise`, always pin an explicit CLI version in `.mise.toml` and avoid unpinned upgrades.
 - If migrating Tailwind major versions (e.g., v3 -> v4), explicitly update Tailwind config/input syntax and verify generated CSS includes expected base/utilities before closing the task.
+- When using `gh` CLI commands with `--body` or other string arguments via shell, avoid Markdown backticks in inline command strings (bash executes them). Use plain text or escape backticks.
 
 Provide a `Makefile` containing at least the following standard targets:
 
