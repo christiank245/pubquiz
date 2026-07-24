@@ -1,0 +1,76 @@
+[
+  {
+    "name": "locations",
+    "type": "base",
+    "fields": [
+      {
+        "name": "name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "maps_url",
+        "type": "url",
+        "required": true
+      },
+      {
+        "name": "capacity",
+        "type": "number",
+        "required": true,
+        "min": 1
+      }
+    ]
+  },
+  {
+    "name": "quiz_dates",
+    "type": "base",
+    "fields": [
+      {
+        "name": "scheduled_at",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "location",
+        "type": "relation",
+        "required": true,
+        "collection": "locations",
+        "maxSelect": 1
+      },
+      {
+        "name": "is_open",
+        "type": "bool",
+        "required": false
+      }
+    ]
+  },
+  {
+    "name": "registrations",
+    "type": "base",
+    "fields": [
+      {
+        "name": "quiz",
+        "type": "relation",
+        "required": true,
+        "collection": "quiz_dates",
+        "maxSelect": 1
+      },
+      {
+        "name": "email",
+        "type": "email",
+        "required": true
+      },
+      {
+        "name": "team_name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "team_size",
+        "type": "number",
+        "required": true,
+        "min": 1
+      }
+    ]
+  }
+]

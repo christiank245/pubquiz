@@ -1,0 +1,26 @@
+{{define "layout_start"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{.Title}}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <link rel="stylesheet" href="/assets/css/styles.css" />
+</head>
+<body class="bg-slate-100 text-slate-900">
+  <header class="bg-slate-900 text-white">
+    <div class="mx-auto max-w-5xl px-4 py-6">
+      <h1 class="text-2xl font-bold">Pub Quiz Signup</h1>
+      <p class="mt-1 text-sm text-slate-300">Pick a date and register your team.</p>
+      <a class="mt-3 inline-block text-sm text-cyan-300 underline" href="/_/">Admin (PocketBase)</a>
+    </div>
+  </header>
+  <main class="mx-auto max-w-5xl px-4 py-8">
+{{end}}
+
+{{define "layout_end"}}
+  </main>
+</body>
+</html>
+{{end}}
