@@ -111,6 +111,7 @@ If the user chooses to wrap up the session:
   - Prefer human-readable relation labels (never raw relation IDs in overview tables when resolvable).
   - Use dropdowns for single relation fields.
   - Make table rows clickable to open edit modal; keep destructive actions explicit via separate controls (checkbox + delete button).
+  - For collection listing order, prefer query-level sorting. If sorting depends on related collection fields (for example registrations sorted by `quiz_dates.scheduled_at`), prefer join-based ordering in SQL instead of in-memory post-sorting when feasible.
 
 ---
 
