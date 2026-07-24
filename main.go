@@ -123,15 +123,18 @@ type AdminLoginViewData struct {
 }
 
 type PageData struct {
-	Title        string
-	PageTemplate string
-	SetupError   string
-	Quizzes      []QuizCard
-	Quiz         QuizCard
-	Register     RegisterPanelData
-	Unregister   UnregisterViewData
-	AdminMerge   AdminMergeViewData
-	AdminLogin   AdminLoginViewData
+	Title               string
+	PageTemplate        string
+	IsQuizAdmin         bool
+	ShowQuizAdminLogout bool
+	SetupError          string
+	Quizzes             []QuizCard
+	Quiz                QuizCard
+	Register            RegisterPanelData
+	Unregister          UnregisterViewData
+	Admin               AdminPageData
+	AdminMerge          AdminMergeViewData
+	AdminLogin          AdminLoginViewData
 }
 
 type MergeRegistrationsRequest struct {
@@ -706,6 +709,8 @@ func main() {
 				})
 			},
 		})
+
+		registerQuizAdminRoutes(e.Router, app)
 
 		return nil
 	})

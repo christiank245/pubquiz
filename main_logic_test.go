@@ -68,6 +68,16 @@ var _ = Describe("registration and quiz helpers", func() {
 			Expect(hasEmptyValues([]string{"ok", ""})).To(BeTrue())
 			Expect(hasEmptyValues([]string{"ok", "still-ok"})).To(BeFalse())
 		})
+
+		Describe("quiz admin helpers", func() {
+			It("splits comma separated values", func() {
+				Expect(splitCSVValues("a, b,\n c")).To(Equal([]string{"a", "b", "c"}))
+			})
+
+			It("builds username from email", func() {
+				Expect(authUsernameFromEmail("quiz.admin@example.com")).To(Equal("quiz.admin"))
+			})
+		})
 	})
 
 	Describe("parseMergeConsent", func() {
