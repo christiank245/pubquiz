@@ -2,7 +2,7 @@ APP_NAME=pubquiz
 BIN_DIR=bin
 TAILWIND_BIN:=$(shell mise which tailwindcss 2>/dev/null)
 
-.PHONY: deps css run build test clean
+.PHONY: deps css run build test test-e2e clean
 
 deps:
 	mise install
@@ -21,6 +21,9 @@ build: css
 
 test:
 	go tool ginkgo -r ./...
+
+test-e2e:
+	RUN_PLAYWRIGHT_E2E=1 go tool ginkgo -r --focus="playwright e2e"
 
 clean:
 	rm -rf $(BIN_DIR)
