@@ -10,13 +10,11 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
 	"github.com/labstack/echo/v5"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
@@ -25,7 +23,6 @@ import (
 	"github.com/pocketbase/pocketbase/daos"
 	"github.com/pocketbase/pocketbase/models"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
-	"github.com/pocketbase/pocketbase/tools/security"
 
 	_ "pubquiz-website2.0/migrations"
 )
@@ -35,14 +32,6 @@ var webFiles embed.FS
 
 var tpl = template.Must(template.New("site").Funcs(template.FuncMap{
 	"add1": func(i int) int { return i + 1 },
-	"contains": func(values []string, target string) bool {
-		for _, value := range values {
-			if value == target {
-				return true
-			}
-		}
-		return false
-	},
 }).ParseFS(
 	webFiles,
 	"web/templates/*.html",
@@ -53,7 +42,6 @@ var tpl = template.Must(template.New("site").Funcs(template.FuncMap{
 const (
 	quizAutoCloseBeforeStart = time.Hour
 	maxTeamSize              = 10
-	adminSessionCookieName   = "pubquiz_admin_session"
 )
 
 type QuizCard struct {
@@ -93,35 +81,6 @@ type UnregisterViewData struct {
 	ShowConfirm    bool
 }
 
-type AdminMergeViewData struct {
-	Events                  []QuizCard
-	SelectedQuizID          string
-	EligibleRegistrations   []AdminMergeRegistrationRow
-	SelectedRegistrationIDs []string
-	TeamName                string
-	Error                   string
-	Success                 string
-	MergedRecordID          string
-	MergedQuizID            string
-	MergedTeamName          string
-	MergedTeamSize          int
-	MergedEmail             string
-	MergedFromIDs           []string
-}
-
-type AdminMergeRegistrationRow struct {
-	ID       string
-	TeamName string
-	TeamSize int
-	Email    string
-}
-
-type AdminLoginViewData struct {
-	Email    string
-	Redirect string
-	Error    string
-}
-
 type PageData struct {
 	Title               string
 	PageTemplate        string
@@ -133,15 +92,12 @@ type PageData struct {
 	Register            RegisterPanelData
 	Unregister          UnregisterViewData
 	Admin               AdminPageData
-	AdminMerge          AdminMergeViewData
-	AdminLogin          AdminLoginViewData
 }
 
 type MergeRegistrationsRequest struct {
 	RegistrationIDs []string `json:"registration_ids"`
 	TeamName        string   `json:"team_name"`
 	Email           string   `json:"email"`
-	WillingToMerge  *bool    `json:"willing_to_merge"`
 }
 
 type mergeRequestError struct {
@@ -163,16 +119,6 @@ func main() {
 		}
 
 		e.Router.GET("/assets/*", apis.StaticDirectoryHandler(assetFS, false))
-
-		requireAdminSession := func(next echo.HandlerFunc) echo.HandlerFunc {
-			return func(c echo.Context) error {
-				if _, err := currentAdminFromSession(app, c); err != nil {
-					loginTarget := "/admin/login?redirect=" + url.QueryEscape(c.Request().URL.RequestURI())
-					return c.Redirect(http.StatusSeeOther, loginTarget)
-				}
-				return next(c)
-			}
-		}
 
 		e.Router.AddRoute(echo.Route{
 			Method: http.MethodGet,
@@ -434,7 +380,6 @@ func main() {
 					registrationIDs,
 					payload.TeamName,
 					payload.Email,
-					payload.WillingToMerge,
 				)
 				if err != nil {
 					var reqErr mergeRequestError
@@ -453,259 +398,6 @@ func main() {
 					"email":                  mergedRecord.GetString("email"),
 					"willing_to_merge":       mergedRecord.GetBool("willing_to_merge"),
 					"merged_from_ids":        registrationIDs,
-				})
-			},
-		})
-
-		e.Router.AddRoute(echo.Route{
-			Method: http.MethodGet,
-			Path:   "/admin/login",
-			Handler: func(c echo.Context) error {
-				redirectTo := strings.TrimSpace(c.QueryParam("redirect"))
-				if redirectTo == "" {
-					redirectTo = "/admin/registrations/merge"
-				}
-
-				return renderPage(c, PageData{
-					Title:        "Admin Login",
-					PageTemplate: "admin_login",
-					AdminLogin: AdminLoginViewData{
-						Redirect: redirectTo,
-					},
-				})
-			},
-		})
-
-		e.Router.AddRoute(echo.Route{
-			Method: http.MethodPost,
-			Path:   "/admin/login",
-			Handler: func(c echo.Context) error {
-				email := strings.TrimSpace(c.FormValue("email"))
-				password := c.FormValue("password")
-				redirectTo := sanitizeAdminRedirect(c.FormValue("redirect"))
-
-				loginData := AdminLoginViewData{
-					Email:    email,
-					Redirect: redirectTo,
-				}
-
-				if email == "" || password == "" {
-					loginData.Error = "Email and password are required."
-					return renderPage(c, PageData{
-						Title:        "Admin Login",
-						PageTemplate: "admin_login",
-						AdminLogin:   loginData,
-					})
-				}
-
-				admin, err := app.Dao().FindAdminByEmail(email)
-				if err != nil || !admin.ValidatePassword(password) {
-					loginData.Error = "Invalid admin credentials."
-					return renderPage(c, PageData{
-						Title:        "Admin Login",
-						PageTemplate: "admin_login",
-						AdminLogin:   loginData,
-					})
-				}
-
-				sessionToken, sessionDuration, err := buildAdminSessionToken(app, admin)
-				if err != nil {
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to create admin session")
-				}
-
-				c.SetCookie(&http.Cookie{
-					Name:     adminSessionCookieName,
-					Value:    sessionToken,
-					Path:     "/",
-					HttpOnly: true,
-					SameSite: http.SameSiteLaxMode,
-					Secure:   c.Scheme() == "https",
-					MaxAge:   int(sessionDuration.Seconds()),
-				})
-
-				return c.Redirect(http.StatusSeeOther, redirectTo)
-			},
-		})
-
-		e.Router.AddRoute(echo.Route{
-			Method:      http.MethodPost,
-			Path:        "/admin/logout",
-			Middlewares: []echo.MiddlewareFunc{requireAdminSession},
-			Handler: func(c echo.Context) error {
-				c.SetCookie(&http.Cookie{
-					Name:     adminSessionCookieName,
-					Value:    "",
-					Path:     "/",
-					HttpOnly: true,
-					SameSite: http.SameSiteLaxMode,
-					Secure:   c.Scheme() == "https",
-					MaxAge:   -1,
-				})
-				return c.Redirect(http.StatusSeeOther, "/admin/login")
-			},
-		})
-
-		e.Router.AddRoute(echo.Route{
-			Method:      http.MethodGet,
-			Path:        "/admin/registrations/merge",
-			Middlewares: []echo.MiddlewareFunc{requireAdminSession},
-			Handler: func(c echo.Context) error {
-				selectedQuizID := strings.TrimSpace(c.QueryParam("quiz_id"))
-
-				events, err := loadUpcomingQuizzes(app)
-				if err != nil {
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to load upcoming quizzes")
-				}
-
-				mergeData := AdminMergeViewData{
-					Events:         events,
-					SelectedQuizID: selectedQuizID,
-				}
-
-				if selectedQuizID != "" {
-					if !quizIDExists(events, selectedQuizID) {
-						mergeData.Error = "Selected quiz is not available."
-					} else {
-						rows, err := loadMergeEligibleRegistrations(app, selectedQuizID)
-						if err != nil {
-							return echo.NewHTTPError(http.StatusInternalServerError, "failed to load merge candidates")
-						}
-						mergeData.EligibleRegistrations = rows
-					}
-				}
-
-				return renderPage(c, PageData{
-					Title:        "Admin: Merge Registrations",
-					PageTemplate: "admin_merge",
-					AdminMerge:   mergeData,
-				})
-			},
-		})
-
-		e.Router.AddRoute(echo.Route{
-			Method:      http.MethodPost,
-			Path:        "/admin/registrations/merge",
-			Middlewares: []echo.MiddlewareFunc{requireAdminSession},
-			Handler: func(c echo.Context) error {
-				selectedQuizID := strings.TrimSpace(c.FormValue("quiz_id"))
-				teamName := strings.TrimSpace(c.FormValue("team_name"))
-
-				events, err := loadUpcomingQuizzes(app)
-				if err != nil {
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to load upcoming quizzes")
-				}
-
-				mergeData := AdminMergeViewData{
-					Events:         events,
-					SelectedQuizID: selectedQuizID,
-					TeamName:       teamName,
-				}
-
-				if selectedQuizID == "" {
-					mergeData.Error = "Please select a quiz event first."
-					return renderPage(c, PageData{
-						Title:        "Admin: Merge Registrations",
-						PageTemplate: "admin_merge",
-						AdminMerge:   mergeData,
-					})
-				}
-				if !quizIDExists(events, selectedQuizID) {
-					mergeData.Error = "Selected quiz is not available."
-					return renderPage(c, PageData{
-						Title:        "Admin: Merge Registrations",
-						PageTemplate: "admin_merge",
-						AdminMerge:   mergeData,
-					})
-				}
-
-				eligibleRows, err := loadMergeEligibleRegistrations(app, selectedQuizID)
-				if err != nil {
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to load merge candidates")
-				}
-				mergeData.EligibleRegistrations = eligibleRows
-
-				if err := c.Request().ParseForm(); err != nil {
-					return echo.NewHTTPError(http.StatusBadRequest, "invalid form payload")
-				}
-				mergeData.SelectedRegistrationIDs = c.Request().Form["registration_ids"]
-
-				registrationIDs, err := normalizeRegistrationIDs(mergeData.SelectedRegistrationIDs)
-				if err != nil {
-					mergeData.Error = err.Error()
-					return renderPage(c, PageData{
-						Title:        "Admin: Merge Registrations",
-						PageTemplate: "admin_merge",
-						AdminMerge:   mergeData,
-					})
-				}
-
-				eligibleIDs := make(map[string]struct{}, len(eligibleRows))
-				for _, row := range eligibleRows {
-					eligibleIDs[row.ID] = struct{}{}
-				}
-				for _, registrationID := range registrationIDs {
-					if _, ok := eligibleIDs[registrationID]; !ok {
-						mergeData.Error = "Please select only teams marked as merge candidates for this event."
-						return renderPage(c, PageData{
-							Title:        "Admin: Merge Registrations",
-							PageTemplate: "admin_merge",
-							AdminMerge:   mergeData,
-						})
-					}
-				}
-
-				formData := AdminMergeViewData{
-					SelectedQuizID: selectedQuizID,
-					TeamName:       teamName,
-				}
-
-				col, err := app.Dao().FindCollectionByNameOrId("registrations")
-				if err != nil {
-					return echo.NewHTTPError(http.StatusInternalServerError, "registrations collection is missing")
-				}
-
-				mergedRecord, err := mergeRegistrations(
-					app.Dao(),
-					col,
-					registrationIDs,
-					formData.TeamName,
-					"",
-					nil,
-				)
-				if err != nil {
-					var reqErr mergeRequestError
-					if errors.As(err, &reqErr) {
-						mergeData.Error = reqErr.Error()
-						return renderPage(c, PageData{
-							Title:        "Admin: Merge Registrations",
-							PageTemplate: "admin_merge",
-							AdminMerge:   mergeData,
-						})
-					}
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to merge registrations")
-				}
-
-				updatedEligibleRows, err := loadMergeEligibleRegistrations(app, selectedQuizID)
-				if err != nil {
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to refresh merge candidates")
-				}
-
-				return renderPage(c, PageData{
-					Title:        "Admin: Merge Registrations",
-					PageTemplate: "admin_merge",
-					AdminMerge: AdminMergeViewData{
-						Events:                events,
-						SelectedQuizID:        selectedQuizID,
-						EligibleRegistrations: updatedEligibleRows,
-						TeamName:              "",
-						Success:               "Registrations merged successfully.",
-						MergedRecordID:        mergedRecord.Id,
-						MergedQuizID:          mergedRecord.GetString("quiz"),
-						MergedTeamName:        mergedRecord.GetString("team_name"),
-						MergedTeamSize:        mergedRecord.GetInt("team_size"),
-						MergedEmail:           mergedRecord.GetString("email"),
-						MergedFromIDs:         registrationIDs,
-					},
 				})
 			},
 		})
@@ -981,112 +673,6 @@ func parseRegistrationIDsInput(raw string) ([]string, error) {
 	return normalizeRegistrationIDs(fields)
 }
 
-func quizIDExists(quizzes []QuizCard, quizID string) bool {
-	for _, quiz := range quizzes {
-		if quiz.ID == quizID {
-			return true
-		}
-	}
-	return false
-}
-
-func loadMergeEligibleRegistrations(app core.App, quizID string) ([]AdminMergeRegistrationRow, error) {
-	records, err := app.Dao().FindRecordsByFilter(
-		"registrations",
-		"quiz = {:quizId} && willing_to_merge = true",
-		"team_name",
-		0,
-		0,
-		dbx.Params{"quizId": quizID},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	rows := make([]AdminMergeRegistrationRow, 0, len(records))
-	for _, record := range records {
-		rows = append(rows, AdminMergeRegistrationRow{
-			ID:       record.Id,
-			TeamName: record.GetString("team_name"),
-			TeamSize: record.GetInt("team_size"),
-			Email:    record.GetString("email"),
-		})
-	}
-	return rows, nil
-}
-
-func parseOptionalMergeBool(raw string) (*bool, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "auto":
-		return nil, nil
-	case "true":
-		value := true
-		return &value, nil
-	case "false":
-		value := false
-		return &value, nil
-	default:
-		return nil, mergeRequestError{message: "willing_to_merge must be auto, true, or false"}
-	}
-}
-
-func sanitizeAdminRedirect(raw string) string {
-	redirectTo := strings.TrimSpace(raw)
-	if redirectTo == "" {
-		return "/admin/registrations/merge"
-	}
-	if !strings.HasPrefix(redirectTo, "/") || strings.HasPrefix(redirectTo, "//") {
-		return "/admin/registrations/merge"
-	}
-	return redirectTo
-}
-
-func buildAdminSessionToken(app core.App, admin *models.Admin) (string, time.Duration, error) {
-	signingSecret := app.Settings().AdminAuthToken.Secret
-	if strings.TrimSpace(signingSecret) == "" {
-		return "", 0, fmt.Errorf("admin auth token secret is empty")
-	}
-
-	durationSeconds := app.Settings().AdminAuthToken.Duration
-	if durationSeconds <= 0 {
-		durationSeconds = int64((12 * time.Hour).Seconds())
-	}
-
-	token, err := security.NewJWT(jwt.MapClaims{
-		"id":   admin.Id,
-		"type": "admin_merge_session",
-	}, signingSecret, durationSeconds)
-	if err != nil {
-		return "", 0, err
-	}
-
-	return token, time.Duration(durationSeconds) * time.Second, nil
-}
-
-func currentAdminFromSession(app core.App, c echo.Context) (*models.Admin, error) {
-	sessionCookie, err := c.Cookie(adminSessionCookieName)
-	if err != nil {
-		return nil, err
-	}
-
-	signingSecret := app.Settings().AdminAuthToken.Secret
-	if strings.TrimSpace(signingSecret) == "" {
-		return nil, fmt.Errorf("admin auth token secret is empty")
-	}
-
-	claims, err := security.ParseJWT(sessionCookie.Value, signingSecret)
-	if err != nil {
-		return nil, err
-	}
-
-	adminID, ok := claims["id"].(string)
-	if !ok || strings.TrimSpace(adminID) == "" {
-		return nil, fmt.Errorf("admin session token is missing id")
-	}
-
-	return app.Dao().FindAdminById(adminID)
-}
-
 func saveRegistrations(
 	dao *daos.Dao,
 	col *models.Collection,
@@ -1117,10 +703,7 @@ func mergeRegistrations(
 	col *models.Collection,
 	registrationIDs []string,
 	teamName, email string,
-	willingToMerge *bool,
 ) (*models.Record, error) {
-	_ = willingToMerge
-
 	records := make([]*models.Record, 0, len(registrationIDs))
 	for _, registrationID := range registrationIDs {
 		rec, err := dao.FindRecordById("registrations", registrationID)
