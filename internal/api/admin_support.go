@@ -1,8 +1,6 @@
-package main
+package api
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -16,7 +14,6 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/models"
 	"github.com/pocketbase/pocketbase/models/schema"
-	"github.com/pocketbase/pocketbase/tokens"
 )
 
 const (
@@ -95,274 +92,6 @@ type AdminMergeModalData struct {
 	RegistrationIDs string
 	Entries         []AdminMergeModalEntry
 	Error           string
-}
-
-func registerQuizAdminRoutes(router *echo.Echo, app core.App) {
-	router.GET("/quiz-admin", func(c echo.Context) error {
-		if _, err := requireQuizAdmin(c, app); err != nil {
-			return err
-		}
-
-		collections, err := managedCollections(app)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to load collections")
-		}
-		if len(collections) == 0 {
-			return renderPage(c, PageData{
-				Title:               "Quiz Admin",
-				PageTemplate:        "admin_collection",
-				IsQuizAdmin:         true,
-				ShowQuizAdminLogout: true,
-				Admin: AdminPageData{
-					Error: "No non-system collections are available.",
-				},
-			})
-		}
-
-		return c.Redirect(http.StatusSeeOther, "/quiz-admin/collections/"+url.PathEscape(collections[0].Name))
-	})
-
-	router.GET("/quiz-admin/login", func(c echo.Context) error {
-		if _, err := currentQuizAdmin(c, app); err == nil {
-			return c.Redirect(http.StatusSeeOther, "/quiz-admin")
-		}
-		return renderPage(c, PageData{
-			Title:        "Quiz Admin Login",
-			PageTemplate: "admin_login",
-			IsQuizAdmin:  true,
-		})
-	})
-
-	router.POST("/quiz-admin/login", func(c echo.Context) error {
-		email := strings.TrimSpace(c.FormValue("email"))
-		password := strings.TrimSpace(c.FormValue("password"))
-
-		record, err := app.Dao().FindAuthRecordByEmail(quizAdminAuthCollection, email)
-		if err != nil || !record.ValidatePassword(password) {
-			return renderPage(c, PageData{
-				Title:        "Quiz Admin Login",
-				PageTemplate: "admin_login",
-				IsQuizAdmin:  true,
-				Admin: AdminPageData{
-					Error: "Invalid email or password.",
-				},
-			})
-		}
-
-		token, err := tokens.NewRecordAuthToken(app, record)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to create auth token")
-		}
-
-		setQuizAdminCookie(c, token)
-		return c.Redirect(http.StatusSeeOther, "/quiz-admin")
-	})
-
-	router.POST("/quiz-admin/logout", func(c echo.Context) error {
-		clearQuizAdminCookie(c)
-		return c.Redirect(http.StatusSeeOther, "/quiz-admin/login")
-	})
-
-	router.GET("/quiz-admin/collections/:name", func(c echo.Context) error {
-		if _, err := requireQuizAdmin(c, app); err != nil {
-			return err
-		}
-
-		name := strings.TrimSpace(c.PathParam("name"))
-		page, err := buildAdminPageData(app, name, c.QueryParam("success"), c.QueryParam("error"), c.QueryParam("new") == "1", c.QueryParam("edit"), AdminFormState{})
-		if err != nil {
-			return err
-		}
-
-		return renderPage(c, PageData{
-			Title:               "Quiz Admin",
-			PageTemplate:        "admin_collection",
-			IsQuizAdmin:         true,
-			ShowQuizAdminLogout: true,
-			Admin:               page,
-		})
-	})
-
-	router.POST("/quiz-admin/collections/:name/create", func(c echo.Context) error {
-		if _, err := requireQuizAdmin(c, app); err != nil {
-			return err
-		}
-
-		collection, err := managedCollectionByName(app, strings.TrimSpace(c.PathParam("name")))
-		if err != nil {
-			return err
-		}
-		if collection.IsView() {
-			return redirectWithMessage(c, collection.Name, "", "View collections are read-only.")
-		}
-
-		tableFields, formFields := adminFields(collection)
-		form := parseAdminForm(c, formFields)
-
-		record := models.NewRecord(collection)
-		if err := applyFormToRecord(record, formFields, form); err != nil {
-			return renderAdminPageWithFormError(c, app, collection.Name, tableFields, formFields, true, false, "", form, err.Error())
-		}
-		if err := app.Dao().SaveRecord(record); err != nil {
-			return renderAdminPageWithFormError(c, app, collection.Name, tableFields, formFields, true, false, "", form, err.Error())
-		}
-
-		return redirectWithMessage(c, collection.Name, "Entry created.", "")
-	})
-
-	router.POST("/quiz-admin/collections/:name/update", func(c echo.Context) error {
-		if _, err := requireQuizAdmin(c, app); err != nil {
-			return err
-		}
-
-		collection, err := managedCollectionByName(app, strings.TrimSpace(c.PathParam("name")))
-		if err != nil {
-			return err
-		}
-		if collection.IsView() {
-			return redirectWithMessage(c, collection.Name, "", "View collections are read-only.")
-		}
-
-		recordID := strings.TrimSpace(c.FormValue("record_id"))
-		if recordID == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "record id is required")
-		}
-
-		record, err := app.Dao().FindRecordById(collection.Name, recordID)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusNotFound, "record not found")
-		}
-
-		tableFields, formFields := adminFields(collection)
-		form := parseAdminForm(c, formFields)
-
-		if err := applyFormToRecord(record, formFields, form); err != nil {
-			return renderAdminPageWithFormError(c, app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error())
-		}
-		if err := app.Dao().SaveRecord(record); err != nil {
-			return renderAdminPageWithFormError(c, app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error())
-		}
-
-		return redirectWithMessage(c, collection.Name, "Entry updated.", "")
-	})
-
-	router.POST("/quiz-admin/collections/registrations/merge", func(c echo.Context) error {
-		if _, err := requireQuizAdmin(c, app); err != nil {
-			return err
-		}
-
-		registrationIDs, err := parseRegistrationIDsInput(c.FormValue("registration_ids"))
-		if err != nil {
-			return redirectWithMessage(c, "registrations", "", err.Error())
-		}
-
-		col, err := app.Dao().FindCollectionByNameOrId("registrations")
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "registrations collection is missing")
-		}
-
-		mergedRecord, err := mergeRegistrations(
-			app.Dao(),
-			col,
-			registrationIDs,
-			strings.TrimSpace(c.FormValue("team_name")),
-			strings.TrimSpace(c.FormValue("email")),
-		)
-		if err != nil {
-			var reqErr mergeRequestError
-			if errors.As(err, &reqErr) {
-				return redirectWithMessage(c, "registrations", "", reqErr.Error())
-			}
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to merge registrations")
-		}
-
-		return redirectWithMessage(
-			c,
-			"registrations",
-			fmt.Sprintf("Entries merged successfully into \"%s\".", mergedRecord.GetString("team_name")),
-			"",
-		)
-	})
-
-	router.POST("/quiz-admin/collections/registrations/merge/button", func(c echo.Context) error {
-		if _, err := requireQuizAdmin(c, app); err != nil {
-			return err
-		}
-		if err := c.Request().ParseForm(); err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid form data")
-		}
-
-		selection, err := buildRegistrationMergeSelection(app, c.Request().Form["delete_ids"])
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to evaluate merge selection")
-		}
-
-		return renderAdminTemplate(c, "admin_merge_entries_button", AdminMergeButtonData{
-			Enabled: selection.Error == "" && len(selection.Entries) >= 2,
-		})
-	})
-
-	router.POST("/quiz-admin/collections/registrations/merge/modal", func(c echo.Context) error {
-		if _, err := requireQuizAdmin(c, app); err != nil {
-			return err
-		}
-		if err := c.Request().ParseForm(); err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid form data")
-		}
-
-		selection, err := buildRegistrationMergeSelection(app, c.Request().Form["delete_ids"])
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to build merge preview")
-		}
-
-		return renderAdminTemplate(c, "admin_merge_entries_modal", selection)
-	})
-
-	router.POST("/quiz-admin/collections/registrations/merge/modal/close", func(c echo.Context) error {
-		if _, err := requireQuizAdmin(c, app); err != nil {
-			return err
-		}
-		return c.HTML(http.StatusOK, "")
-	})
-
-	router.POST("/quiz-admin/collections/:name/delete", func(c echo.Context) error {
-		if _, err := requireQuizAdmin(c, app); err != nil {
-			return err
-		}
-
-		collection, err := managedCollectionByName(app, strings.TrimSpace(c.PathParam("name")))
-		if err != nil {
-			return err
-		}
-		if collection.IsView() {
-			return redirectWithMessage(c, collection.Name, "", "View collections are read-only.")
-		}
-
-		if err := c.Request().ParseForm(); err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid form data")
-		}
-		deleteIDs := c.Request().Form["delete_ids"]
-		if len(deleteIDs) == 0 {
-			return redirectWithMessage(c, collection.Name, "", "Select at least one entry to delete.")
-		}
-
-		for _, recordID := range deleteIDs {
-			record, err := app.Dao().FindRecordById(collection.Name, recordID)
-			if err != nil {
-				return echo.NewHTTPError(http.StatusNotFound, "record not found")
-			}
-			if collection.Name == "quiz_dates" {
-				if err := deleteRegistrationsForQuizDate(app, recordID); err != nil {
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete linked registrations")
-				}
-			}
-			if err := app.Dao().DeleteRecord(record); err != nil {
-				return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete record")
-			}
-		}
-
-		return redirectWithMessage(c, collection.Name, fmt.Sprintf("Deleted %d entrie(s).", len(deleteIDs)), "")
-	})
 }
 
 func requireQuizAdmin(c echo.Context, app core.App) (*models.Record, error) {
@@ -587,7 +316,7 @@ func renderAdminPageWithFormError(
 	page.EditRecordID = editRecordID
 	page.Form = form
 
-	return renderPage(c, PageData{
+	return renderPageFn(c, PageData{
 		Title:               "Quiz Admin",
 		PageTemplate:        "admin_collection",
 		IsQuizAdmin:         true,
@@ -823,7 +552,7 @@ func formatDateTimeInputValue(raw string) string {
 		return ""
 	}
 
-	when, err := parseDateTime(raw)
+	when, err := ParseDateTime(raw)
 	if err != nil {
 		return raw
 	}
@@ -837,7 +566,7 @@ func formatGermanDateTimeLabel(raw string) string {
 		return ""
 	}
 
-	when, err := parseDateTime(raw)
+	when, err := ParseDateTime(raw)
 	if err != nil {
 		return raw
 	}
@@ -861,7 +590,7 @@ func normalizeDateTimeInput(raw string) (string, error) {
 		return when.UTC().Format(time.RFC3339), nil
 	}
 
-	when, err = parseDateTime(raw)
+	when, err = ParseDateTime(raw)
 	if err != nil {
 		return "", err
 	}
@@ -968,15 +697,14 @@ func relationRecordLabel(app core.App, relatedCollection *models.Collection, rec
 }
 
 func renderAdminTemplate(c echo.Context, templateName string, data any) error {
-	var buf bytes.Buffer
-	if err := tpl.ExecuteTemplate(&buf, templateName, data); err != nil {
-		return err
+	if renderTemplateFn == nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "template renderer is not configured")
 	}
-	return c.HTML(http.StatusOK, buf.String())
+	return renderTemplateFn(c, templateName, data)
 }
 
 func buildRegistrationMergeSelection(app core.App, selectedIDs []string) (AdminMergeModalData, error) {
-	normalizedIDs, err := normalizeRegistrationIDs(selectedIDs)
+	normalizedIDs, err := NormalizeRegistrationIDs(selectedIDs)
 	if err != nil {
 		return AdminMergeModalData{
 			Show:  true,
@@ -1081,4 +809,32 @@ func redirectWithMessage(c echo.Context, collectionName, successMessage, errorMe
 		redirectURL += "?" + encoded
 	}
 	return c.Redirect(http.StatusSeeOther, redirectURL)
+}
+
+func FormatDateTimeInputValue(raw string) string {
+	return formatDateTimeInputValue(raw)
+}
+
+func FormatGermanDateTimeLabel(raw string) string {
+	return formatGermanDateTimeLabel(raw)
+}
+
+func NormalizeDateTimeInput(raw string) (string, error) {
+	return normalizeDateTimeInput(raw)
+}
+
+func FormatAdminValue(value any) string {
+	return formatAdminValue(value)
+}
+
+func FormatRelationValue(value any, relationLabels map[string]string, multiple bool) string {
+	return formatRelationValue(value, relationLabels, multiple)
+}
+
+func NormalizeStringSlice(value any) []string {
+	return normalizeStringSlice(value)
+}
+
+func SplitCSVValues(raw string) []string {
+	return splitCSVValues(raw)
 }
