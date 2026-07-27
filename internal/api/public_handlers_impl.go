@@ -38,11 +38,24 @@ func BuildPublicHandlers(
 	}
 	return PublicHandlers{
 		Home:           h.home,
+		About:          h.about,
+		Contact:        h.contact,
+		Privacy:        h.privacy,
 		Quiz:           h.quiz,
 		Register:       h.register,
 		UnregisterGet:  h.unregisterGet,
 		UnregisterPost: h.unregisterPost,
 	}
+}
+
+func (h publicHandlers) renderStaticPage(c echo.Context, title, templateName string) error {
+	if h.renderers.page == nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "page renderer is not configured")
+	}
+	return h.renderers.page(c, PageData{
+		Title:        title,
+		PageTemplate: templateName,
+	})
 }
 
 func (h publicHandlers) home(c echo.Context) error {
@@ -75,6 +88,18 @@ func (h publicHandlers) home(c echo.Context) error {
 		return h.renderers.template(c, "quiz_overview", page)
 	}
 	return h.renderers.page(c, page)
+}
+
+func (h publicHandlers) about(c echo.Context) error {
+	return h.renderStaticPage(c, "About Us", "about")
+}
+
+func (h publicHandlers) contact(c echo.Context) error {
+	return h.renderStaticPage(c, "Contact Us", "contact")
+}
+
+func (h publicHandlers) privacy(c echo.Context) error {
+	return h.renderStaticPage(c, "Privacy Policy", "privacy")
 }
 
 func (h publicHandlers) quiz(c echo.Context) error {
