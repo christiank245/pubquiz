@@ -1,6 +1,21 @@
-{{define "quiz"}}
-<div class="mb-4">
-  <a class="text-sm text-cyan-700 underline" href="/">← Back to all quiz dates</a>
+{{define "quiz_registration_detail"}}
+<div id="quiz-content">
+  <div class="mb-4">
+    <a
+      class="text-sm text-cyan-700 underline"
+      href="/"
+      hx-get="/"
+      hx-target="#quiz-content"
+      hx-swap="outerHTML"
+      hx-push-url="true"
+    >
+      ← Back to all quiz dates
+    </a>
+  </div>
+  {{template "register_panel" .Register}}
 </div>
-{{template "register_panel" .Register}}
+{{end}}
+
+{{define "quiz"}}
+{{template "quiz_registration_detail" .}}
 {{end}}

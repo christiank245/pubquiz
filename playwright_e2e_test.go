@@ -95,6 +95,28 @@ var _ = Describe("playwright e2e", Ordered, func() {
 		Expect(registerNormalTeam(page, baseURL, "Playwright Team", fmt.Sprintf("playwright-%d@example.com", time.Now().UnixNano()), "4")).To(Succeed())
 	})
 
+	It("loads the public registration panel through htmx", func() {
+		page, err := browser.NewPage()
+		Expect(err).NotTo(HaveOccurred())
+		defer page.Close()
+
+		_, err = page.Goto(baseURL, playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
+		Expect(err).NotTo(HaveOccurred())
+
+		tile := page.Locator(`a:has-text("Register team")`).First()
+		hxGet, err := tile.GetAttribute("hx-get")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hxGet).To(ContainSubstring("/quiz?id="))
+
+		target, err := tile.GetAttribute("hx-target")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(target).To(Equal("#quiz-content"))
+
+		Expect(tile.Click()).To(Succeed())
+		Expect(page.Locator(`#quiz-content #registration-panel`).First().WaitFor()).To(Succeed())
+		Expect(page.Locator(`input[name="email"]`).First().WaitFor()).To(Succeed())
+	})
+
 	It("supports split-team registration for groups over 10", func() {
 		page, err := browser.NewPage()
 		Expect(err).NotTo(HaveOccurred())
@@ -139,6 +161,34 @@ var _ = Describe("playwright e2e", Ordered, func() {
 		Expect(page.Locator(`text=Invalid email or password.`).First().WaitFor()).To(Succeed())
 	})
 
+	It("wires quiz admin collection navigation through htmx targets", func() {
+		page, err := browser.NewPage()
+		Expect(err).NotTo(HaveOccurred())
+		defer page.Close()
+
+		Expect(loginQuizAdmin(page, baseURL, quizAdminEmail, quizAdminPassword)).To(Succeed())
+
+		_, err = page.Goto(baseURL+"/quiz-admin/collections/locations", playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(page.Locator(`#admin-collection-content`).First().WaitFor()).To(Succeed())
+		Expect(page.Locator(`#admin-collection-sidebar`).First().WaitFor()).To(Succeed())
+
+		addLink := page.Locator(`a:has-text("Add entry")`).First()
+		hxGet, err := addLink.GetAttribute("hx-get")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hxGet).To(ContainSubstring("/quiz-admin/collections/locations?new=1"))
+
+		target, err := addLink.GetAttribute("hx-target")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(target).To(Equal("#admin-collection-content"))
+
+		rowLink := page.Locator(`#admin-collection-content tbody tr a`).First()
+		rowTarget, err := rowLink.GetAttribute("hx-target")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rowTarget).To(Equal("#admin-collection-content"))
+	})
+
 	It("supports quiz admin CRUD for locations and quiz dates", func() {
 		page, err := browser.NewPage()
 		Expect(err).NotTo(HaveOccurred())
@@ -151,41 +201,69 @@ var _ = Describe("playwright e2e", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(page.Locator(`a:has-text("Add entry")`).Click()).To(Succeed())
-		Expect(page.Locator(`input[name="field_name"]`).Fill(locationName)).To(Succeed())
-		Expect(page.Locator(`input[name="field_maps_url"]`).Fill("https://maps.google.com/?q=Ghent")).To(Succeed())
-		Expect(page.Locator(`input[name="field_capacity"]`).Fill("42")).To(Succeed())
-		Expect(page.Locator(`button:has-text("Create")`).Click()).To(Succeed())
+		Expect(page.Locator(`#admin-edit-modal`).First().WaitFor()).To(Succeed())
+		Expect(page.Locator(`#admin-edit-modal a:has-text("Close")`).Click()).To(Succeed())
+		Eventually(func() bool {
+			visible, err := page.Locator(`#admin-edit-modal`).First().IsVisible()
+			Expect(err).NotTo(HaveOccurred())
+			return visible
+		}).Should(BeFalse())
+
+		Expect(page.Locator(`a:has-text("Add entry")`).Click()).To(Succeed())
+		visibleEditModal := page.Locator(`#admin-edit-modal:not(.hidden)`)
+		Expect(visibleEditModal.First().WaitFor()).To(Succeed())
+		Expect(visibleEditModal.Locator(`input[name="field_name"]`).Fill(locationName)).To(Succeed())
+		Expect(visibleEditModal.Locator(`input[name="field_maps_url"]`).Fill("https://maps.google.com/?q=Ghent")).To(Succeed())
+		Expect(visibleEditModal.Locator(`input[name="field_capacity"]`).Fill("42")).To(Succeed())
+		Expect(visibleEditModal.Locator(`button:has-text("Create")`).Click()).To(Succeed())
 		Expect(page.Locator(`text=Entry created.`).First().WaitFor()).To(Succeed())
+		Eventually(func() bool {
+			visible, err := page.Locator(`#admin-edit-modal`).First().IsVisible()
+			Expect(err).NotTo(HaveOccurred())
+			return visible
+		}).Should(BeFalse())
+		_, err = page.Goto(baseURL+"/quiz-admin/collections/locations", playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
+		Expect(err).NotTo(HaveOccurred())
 
 		locationRowLink := page.Locator(fmt.Sprintf(`tr:has-text("%s") a:has-text("%s")`, locationName, locationName)).First()
 		Expect(locationRowLink.Click()).To(Succeed())
-		Expect(page.Locator(`input[name="field_capacity"]`).Fill("45")).To(Succeed())
-		Expect(page.Locator(`button:has-text("Save changes")`).Click()).To(Succeed())
+		Expect(visibleEditModal.First().WaitFor()).To(Succeed())
+		Expect(visibleEditModal.Locator(`input[name="field_capacity"]`).Fill("45")).To(Succeed())
+		Expect(visibleEditModal.Locator(`button:has-text("Save changes")`).Click()).To(Succeed())
 		Expect(page.Locator(`text=Entry updated.`).First().WaitFor()).To(Succeed())
+		Eventually(func() bool {
+			visible, err := page.Locator(`#admin-edit-modal`).First().IsVisible()
+			Expect(err).NotTo(HaveOccurred())
+			return visible
+		}).Should(BeFalse())
 
 		_, err = page.Goto(baseURL+"/quiz-admin/collections/quiz_dates", playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(page.Locator(`a:has-text("Add entry")`).Click()).To(Succeed())
-		Expect(page.Locator(`input[name="field_scheduled_at"]`).Fill("2027-07-08T19:45")).To(Succeed())
-		_, err = page.Locator(`select[name="field_location"]`).SelectOption(playwright.SelectOptionValues{
+		Expect(visibleEditModal.First().WaitFor()).To(Succeed())
+		Expect(visibleEditModal.Locator(`input[name="field_scheduled_at"]`).Fill("2027-07-08T19:45")).To(Succeed())
+		_, err = visibleEditModal.Locator(`select[name="field_location"]`).SelectOption(playwright.SelectOptionValues{
 			Labels: playwright.StringSlice(locationName),
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(page.Locator(`button:has-text("Create")`).Click()).To(Succeed())
+		Expect(visibleEditModal.Locator(`button:has-text("Create")`).Click()).To(Succeed())
 		Expect(page.Locator(`text=Entry created.`).First().WaitFor()).To(Succeed())
 		Expect(page.Locator(`text=08.07.2027 19:45`).First().WaitFor()).To(Succeed())
+		_, err = page.Goto(baseURL+"/quiz-admin/collections/quiz_dates", playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
+		Expect(err).NotTo(HaveOccurred())
 
-		page.OnDialog(func(dialog playwright.Dialog) {
-			_ = dialog.Accept()
-		})
 		Expect(page.Locator(`tr:has-text("08.07.2027 19:45") input[name="delete_ids"]`).First().Check()).To(Succeed())
 		Expect(page.Locator(`button:has-text("Delete selected")`).Click()).To(Succeed())
+		Expect(page.Locator(`#admin-delete-modal`).First().WaitFor()).To(Succeed())
+		Expect(page.Locator(`#admin-delete-modal button:has-text("Delete")`).Click()).To(Succeed())
 		Expect(page.Locator(`text=Deleted 1 entrie(s).`).First().WaitFor()).To(Succeed())
 
 		_, err = page.Goto(baseURL+"/quiz-admin/collections/locations", playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(page.Locator(fmt.Sprintf(`tr:has-text("%s") input[name="delete_ids"]`, locationName)).First().Check()).To(Succeed())
 		Expect(page.Locator(`button:has-text("Delete selected")`).Click()).To(Succeed())
+		Expect(page.Locator(`#admin-delete-modal`).First().WaitFor()).To(Succeed())
+		Expect(page.Locator(`#admin-delete-modal button:has-text("Delete")`).Click()).To(Succeed())
 		Expect(page.Locator(`text=Deleted 1 entrie(s).`).First().WaitFor()).To(Succeed())
 	})
 
@@ -208,9 +286,18 @@ var _ = Describe("playwright e2e", Ordered, func() {
 
 		Expect(page.Locator(fmt.Sprintf(`tr:has-text("%s") a:has-text("%s")`, teamEdit, teamEdit)).First().Click()).To(Succeed())
 		updatedTeamName := teamEdit + " Updated"
-		Expect(page.Locator(`input[name="field_team_name"]`).Fill(updatedTeamName)).To(Succeed())
-		Expect(page.Locator(`button:has-text("Save changes")`).Click()).To(Succeed())
+		registrationEditModal := page.Locator(`#admin-edit-modal:not(.hidden)`)
+		Expect(registrationEditModal.First().WaitFor()).To(Succeed())
+		Expect(registrationEditModal.Locator(`input[name="field_team_name"]`).Fill(updatedTeamName)).To(Succeed())
+		Expect(registrationEditModal.Locator(`button:has-text("Save changes")`).Click()).To(Succeed())
 		Expect(page.Locator(`text=Entry updated.`).First().WaitFor()).To(Succeed())
+		Eventually(func() bool {
+			visible, err := page.Locator(`#admin-edit-modal`).First().IsVisible()
+			Expect(err).NotTo(HaveOccurred())
+			return visible
+		}).Should(BeFalse())
+		_, err = page.Goto(baseURL+"/quiz-admin/collections/registrations", playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
+		Expect(err).NotTo(HaveOccurred())
 
 		Expect(page.Locator(fmt.Sprintf(`tr:has-text("%s") input[name="delete_ids"]`, teamA)).First().Check()).To(Succeed())
 		Expect(page.Locator(fmt.Sprintf(`tr:has-text("%s") input[name="delete_ids"]`, teamB)).First().Check()).To(Succeed())
@@ -223,19 +310,33 @@ var _ = Describe("playwright e2e", Ordered, func() {
 		}).Should(BeFalse())
 		Expect(mergeButton.Click()).To(Succeed())
 		Expect(page.Locator(`h3:has-text("Merge entries")`).First().WaitFor()).To(Succeed())
+		Expect(page.Locator(`#merge-entries-modal button:has-text("Close")`).Click()).To(Succeed())
+		Eventually(func() bool {
+			visible, err := page.Locator(`#merge-entries-modal`).First().IsVisible()
+			Expect(err).NotTo(HaveOccurred())
+			return visible
+		}).Should(BeFalse())
+		Expect(mergeButton.Click()).To(Succeed())
+		Expect(page.Locator(`h3:has-text("Merge entries")`).First().WaitFor()).To(Succeed())
 
 		mergedName := fmt.Sprintf("Merged Team %d", time.Now().UnixNano())
 		Expect(fillRequiredInputInScope(page, `#merge-entries-modal`, "team_name", mergedName)).To(Succeed())
 		Expect(fillRequiredInputInScope(page, `#merge-entries-modal`, "email", fmt.Sprintf("merged-%d@example.com", time.Now().UnixNano()))).To(Succeed())
 		Expect(page.Locator(`#merge-entries-modal button:has-text("Merge selected teams")`).Click()).To(Succeed())
 		Expect(page.Locator(`text=Entries merged successfully into`).First().WaitFor()).To(Succeed())
+		Eventually(func() bool {
+			visible, err := page.Locator(`#merge-entries-modal`).First().IsVisible()
+			Expect(err).NotTo(HaveOccurred())
+			return visible
+		}).Should(BeFalse())
 		Expect(page.Locator(fmt.Sprintf(`tr:has-text("%s")`, mergedName)).First().WaitFor()).To(Succeed())
+		_, err = page.Goto(baseURL+"/quiz-admin/collections/registrations", playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
+		Expect(err).NotTo(HaveOccurred())
 
-		page.OnDialog(func(dialog playwright.Dialog) {
-			_ = dialog.Accept()
-		})
 		Expect(page.Locator(fmt.Sprintf(`tr:has-text("%s") input[name="delete_ids"]`, mergedName)).First().Check()).To(Succeed())
 		Expect(page.Locator(`button:has-text("Delete selected")`).Click()).To(Succeed())
+		Expect(page.Locator(`#admin-delete-modal`).First().WaitFor()).To(Succeed())
+		Expect(page.Locator(`#admin-delete-modal button:has-text("Delete")`).Click()).To(Succeed())
 		Expect(page.Locator(`text=Deleted 1 entrie(s).`).First().WaitFor()).To(Succeed())
 	})
 })

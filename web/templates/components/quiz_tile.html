@@ -1,5 +1,12 @@
 {{define "quiz_tile"}}
-<a href="/quiz?id={{.ID}}" class="block rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md">
+<a
+  href="/quiz?id={{.ID}}"
+  hx-get="/quiz?id={{.ID}}"
+  hx-target="#quiz-content"
+  hx-swap="outerHTML"
+  hx-push-url="true"
+  class="block rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
+>
   <h3 class="text-lg font-semibold">{{.WhenLabel}}</h3>
   <p class="mt-2 text-sm text-slate-700">{{.LocationName}}</p>
   <p class="mt-1 text-sm text-slate-500">Seats remaining: {{.SeatsRemaining}}</p>

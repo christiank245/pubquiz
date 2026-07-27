@@ -1,12 +1,27 @@
 {{define "admin_collection"}}
-<section class="grid gap-4 md:grid-cols-[220px_1fr]">
-  <aside class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+<section id="admin-collection-shell" class="grid gap-4 md:grid-cols-[220px_1fr]">
+  {{template "admin_collection_sidebar" .}}
+  {{template "admin_collection_content" .}}
+</section>
+{{end}}
+
+{{define "admin_collection_fragment"}}
+{{template "admin_collection_sidebar_oob" .}}
+{{template "admin_collection_content" .}}
+{{end}}
+
+{{define "admin_collection_sidebar"}}
+  <aside id="admin-collection-sidebar" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
     <h2 class="text-sm font-semibold uppercase text-slate-500">Collections</h2>
     <ul class="mt-3 grid gap-1">
       {{range .Admin.Collections}}
         <li>
           <a
             href="/quiz-admin/collections/{{.Name}}"
+            hx-get="/quiz-admin/collections/{{.Name}}"
+            hx-target="#admin-collection-content"
+            hx-swap="outerHTML"
+            hx-push-url="true"
             class="block rounded-md px-3 py-2 text-sm {{if eq $.Admin.ActiveCollection .Name}}bg-slate-900 text-white{{else}}text-slate-700 hover:bg-slate-100{{end}}"
           >
             {{.Name}}
@@ -15,13 +30,46 @@
       {{end}}
     </ul>
   </aside>
+{{end}}
 
-  <div class="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+{{define "admin_collection_sidebar_oob"}}
+  <aside id="admin-collection-sidebar" hx-swap-oob="outerHTML" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <h2 class="text-sm font-semibold uppercase text-slate-500">Collections</h2>
+    <ul class="mt-3 grid gap-1">
+      {{range .Admin.Collections}}
+        <li>
+          <a
+            href="/quiz-admin/collections/{{.Name}}"
+            hx-get="/quiz-admin/collections/{{.Name}}"
+            hx-target="#admin-collection-content"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            class="block rounded-md px-3 py-2 text-sm {{if eq $.Admin.ActiveCollection .Name}}bg-slate-900 text-white{{else}}text-slate-700 hover:bg-slate-100{{end}}"
+          >
+            {{.Name}}
+          </a>
+        </li>
+      {{end}}
+    </ul>
+  </aside>
+{{end}}
+
+{{define "admin_collection_content"}}
+  <div id="admin-collection-content" class="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h2 class="text-lg font-semibold">{{.Admin.ActiveCollection}}</h2>
       <div class="flex gap-2">
         {{if ne .Admin.ActiveType "view"}}
-          <a href="/quiz-admin/collections/{{.Admin.ActiveCollection}}?new=1" class="rounded-md bg-cyan-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-cyan-800">Add entry</a>
+          <a
+            href="/quiz-admin/collections/{{.Admin.ActiveCollection}}?new=1"
+            hx-get="/quiz-admin/collections/{{.Admin.ActiveCollection}}?new=1"
+            hx-target="#admin-collection-content"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            class="rounded-md bg-cyan-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-cyan-800"
+          >
+            Add entry
+          </a>
         {{end}}
       </div>
     </div>
@@ -40,8 +88,8 @@
         method="post"
         action="/quiz-admin/collections/{{.Admin.ActiveCollection}}/delete"
         {{if eq .Admin.ActiveCollection "registrations"}}
-          hx-post="/quiz-admin/collections/registrations/merge/button"
           hx-trigger="change from:input[name='delete_ids']"
+          hx-post="/quiz-admin/collections/registrations/merge/button"
           hx-target="#merge-button-slot"
           hx-swap="outerHTML"
         {{end}}
@@ -77,7 +125,14 @@
                   </td>
                   {{range $value := .Values}}
                     <td class="p-0 align-top">
-                      <a class="block w-full px-3 py-2 text-slate-700 hover:bg-slate-50" href="/quiz-admin/collections/{{$.Admin.ActiveCollection}}?edit={{$rowID}}">
+                      <a
+                        class="block w-full px-3 py-2 text-slate-700 hover:bg-slate-50"
+                        href="/quiz-admin/collections/{{$.Admin.ActiveCollection}}?edit={{$rowID}}"
+                        hx-get="/quiz-admin/collections/{{$.Admin.ActiveCollection}}?edit={{$rowID}}"
+                        hx-target="#admin-collection-content"
+                        hx-swap="outerHTML"
+                        hx-push-url="true"
+                      >
                         {{$value}}
                       </a>
                     </td>
@@ -89,7 +144,13 @@
         </div>
         {{if ne .Admin.ActiveType "view"}}
           <div class="mt-3 flex flex-wrap gap-2">
-            <button class="rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-800" type="submit">Delete selected</button>
+            <button
+              class="rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-800"
+              type="button"
+              onclick="document.getElementById('admin-delete-modal').classList.remove('hidden')"
+            >
+              Delete selected
+            </button>
             {{if eq .Admin.ActiveCollection "registrations"}}
               <div id="merge-button-slot">
                 <button
@@ -109,70 +170,119 @@
       <p class="mt-4 text-sm text-slate-600">No entries yet.</p>
     {{end}}
   </div>
-</section>
 
-{{if or .Admin.ShowCreateModal .Admin.ShowEditModal}}
-  <div class="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 p-4">
-    <div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 shadow-lg">
-      <div class="mb-4 flex items-center justify-between gap-3">
-        <h3 class="text-lg font-semibold">
-          {{if .Admin.ShowCreateModal}}Add entry{{else}}Edit entry{{end}}
-        </h3>
-        <a class="text-sm text-cyan-700 underline" href="/quiz-admin/collections/{{.Admin.ActiveCollection}}">Close</a>
-      </div>
+  {{if or .Admin.ShowCreateModal .Admin.ShowEditModal}}
+    <div id="admin-edit-modal" class="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 p-4">
+      <div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 shadow-lg">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <h3 class="text-lg font-semibold">
+            {{if .Admin.ShowCreateModal}}Add entry{{else}}Edit entry{{end}}
+          </h3>
+          <a
+            class="text-sm text-cyan-700 underline"
+            href="/quiz-admin/collections/{{.Admin.ActiveCollection}}"
+            hx-get="/quiz-admin/collections/{{.Admin.ActiveCollection}}"
+            hx-target="#admin-collection-content"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            onclick="document.getElementById('admin-edit-modal')?.classList.add('hidden')"
+          >
+            Close
+          </a>
+        </div>
 
-      {{if .Admin.ShowEditModal}}
-        <p class="mb-4 text-sm text-slate-600">Record ID: <span class="font-mono">{{.Admin.EditRecordID}}</span></p>
-      {{end}}
-
-      <form class="grid gap-3" method="post" action="{{if .Admin.ShowCreateModal}}/quiz-admin/collections/{{.Admin.ActiveCollection}}/create{{else}}/quiz-admin/collections/{{.Admin.ActiveCollection}}/update{{end}}">
         {{if .Admin.ShowEditModal}}
-          <input type="hidden" name="record_id" value="{{.Admin.EditRecordID}}" />
+          <p class="mb-4 text-sm text-slate-600">Record ID: <span class="font-mono">{{.Admin.EditRecordID}}</span></p>
         {{end}}
 
-        {{range .Admin.FormFields}}
-          {{if .Editable}}
-            <label class="grid gap-1 text-sm">
-              <span class="font-medium text-slate-700">
-                {{.Name}}{{if .Required}} *{{end}}
-                {{if .Multiple}} <span class="text-xs text-slate-500">(comma separated)</span>{{end}}
-              </span>
-              {{if eq .Type "bool"}}
-                <input class="h-4 w-4" type="checkbox" name="field_{{.Name}}" value="true" {{if index $.Admin.Form.Bools .Name}}checked{{end}} />
-              {{else if and (eq .Type "relation") (not .Multiple)}}
-                {{$fieldName := .Name}}
-                <select class="rounded-md border border-slate-300 px-3 py-2" name="field_{{.Name}}" {{if .Required}}required{{end}}>
-                  <option value="">Select an option</option>
-                  {{range index $.Admin.RelationSelectOptions $fieldName}}
-                    <option value="{{.Value}}" {{if eq (index $.Admin.Form.Text $fieldName) .Value}}selected{{end}}>{{.Label}}</option>
-                  {{end}}
-                </select>
-              {{else if eq .Type "password"}}
-                <input class="rounded-md border border-slate-300 px-3 py-2" type="password" name="field_{{.Name}}" />
-              {{else}}
-                <input
-                  class="rounded-md border border-slate-300 px-3 py-2"
-                  type="{{if eq .Type "number"}}number{{else if eq .Type "email"}}email{{else if eq .Type "date"}}datetime-local{{else}}text{{end}}"
-                  name="field_{{.Name}}"
-                  value="{{index $.Admin.Form.Text .Name}}"
-                  {{if .Required}}required{{end}}
-                />
-              {{end}}
-            </label>
+        <form
+          class="grid gap-3"
+          method="post"
+          action="{{if .Admin.ShowCreateModal}}/quiz-admin/collections/{{.Admin.ActiveCollection}}/create{{else}}/quiz-admin/collections/{{.Admin.ActiveCollection}}/update{{end}}"
+          hx-post="{{if .Admin.ShowCreateModal}}/quiz-admin/collections/{{.Admin.ActiveCollection}}/create{{else}}/quiz-admin/collections/{{.Admin.ActiveCollection}}/update{{end}}"
+          hx-target="#admin-collection-content"
+          hx-swap="outerHTML"
+          hx-push-url="/quiz-admin/collections/{{.Admin.ActiveCollection}}"
+          hx-on::before-request="document.getElementById('admin-edit-modal')?.classList.add('hidden')"
+        >
+          {{if .Admin.ShowEditModal}}
+            <input type="hidden" name="record_id" value="{{.Admin.EditRecordID}}" />
           {{end}}
-        {{end}}
 
-        <button class="mt-2 rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-800" type="submit">
-          {{if .Admin.ShowCreateModal}}Create{{else}}Save changes{{end}}
-        </button>
+          {{range .Admin.FormFields}}
+            {{if .Editable}}
+              <label class="grid gap-1 text-sm">
+                <span class="font-medium text-slate-700">
+                  {{.Name}}{{if .Required}} *{{end}}
+                  {{if .Multiple}} <span class="text-xs text-slate-500">(comma separated)</span>{{end}}
+                </span>
+                {{if eq .Type "bool"}}
+                  <input class="h-4 w-4" type="checkbox" name="field_{{.Name}}" value="true" {{if index $.Admin.Form.Bools .Name}}checked{{end}} />
+                {{else if and (eq .Type "relation") (not .Multiple)}}
+                  {{$fieldName := .Name}}
+                  <select class="rounded-md border border-slate-300 px-3 py-2" name="field_{{.Name}}" {{if .Required}}required{{end}}>
+                    <option value="">Select an option</option>
+                    {{range index $.Admin.RelationSelectOptions $fieldName}}
+                      <option value="{{.Value}}" {{if eq (index $.Admin.Form.Text $fieldName) .Value}}selected{{end}}>{{.Label}}</option>
+                    {{end}}
+                  </select>
+                {{else if eq .Type "password"}}
+                  <input class="rounded-md border border-slate-300 px-3 py-2" type="password" name="field_{{.Name}}" />
+                {{else}}
+                  <input
+                    class="rounded-md border border-slate-300 px-3 py-2"
+                    type="{{if eq .Type "number"}}number{{else if eq .Type "email"}}email{{else if eq .Type "date"}}datetime-local{{else}}text{{end}}"
+                    name="field_{{.Name}}"
+                    value="{{index $.Admin.Form.Text .Name}}"
+                    {{if .Required}}required{{end}}
+                  />
+                {{end}}
+              </label>
+            {{end}}
+          {{end}}
+
+          <button class="mt-2 rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-800" type="submit">
+            {{if .Admin.ShowCreateModal}}Create{{else}}Save changes{{end}}
+          </button>
+        </form>
+      </div>
+    </div>
+  {{end}}
+
+  {{if eq .Admin.ActiveCollection "registrations"}}
+    <div id="merge-modal-slot"></div>
+  {{end}}
+
+  <div id="admin-delete-modal" class="fixed inset-0 z-50 hidden place-items-center bg-slate-900/60 p-4">
+    <div class="w-full max-w-md rounded-xl bg-white p-5 shadow-lg">
+      <form
+        class="grid gap-4"
+        method="post"
+        action="/quiz-admin/collections/{{.Admin.ActiveCollection}}/delete"
+        hx-post="/quiz-admin/collections/{{.Admin.ActiveCollection}}/delete"
+        hx-target="#admin-collection-content"
+        hx-swap="outerHTML"
+        hx-push-url="/quiz-admin/collections/{{.Admin.ActiveCollection}}"
+        hx-include="#admin-selection-form"
+        hx-on::before-request="document.getElementById('admin-delete-modal').classList.add('hidden')"
+      >
+        <h3 class="text-lg font-semibold">Delete selected entries?</h3>
+        <p class="text-sm text-slate-600">This cannot be undone.</p>
+        <div class="flex justify-end gap-2">
+          <button
+            class="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 hover:bg-slate-100"
+            type="button"
+            onclick="document.getElementById('admin-delete-modal').classList.add('hidden')"
+          >
+            Cancel
+          </button>
+          <button class="rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white hover:bg-red-800" type="submit">
+            Delete
+          </button>
+        </div>
       </form>
     </div>
   </div>
-{{end}}
-
-{{if eq .Admin.ActiveCollection "registrations"}}
-  <div id="merge-modal-slot"></div>
-{{end}}
 {{end}}
 
 {{define "admin_merge_entries_button"}}
@@ -207,6 +317,7 @@
           hx-post="/quiz-admin/collections/registrations/merge/modal/close"
           hx-target="#merge-modal-slot"
           hx-swap="innerHTML"
+          hx-on::before-request="document.getElementById('merge-entries-modal')?.classList.add('hidden')"
         >
           Close
         </button>
@@ -239,7 +350,16 @@
           </table>
         </div>
 
-        <form class="mt-4 grid gap-3" method="post" action="/quiz-admin/collections/registrations/merge">
+        <form
+          class="mt-4 grid gap-3"
+          method="post"
+          action="/quiz-admin/collections/registrations/merge"
+          hx-post="/quiz-admin/collections/registrations/merge"
+          hx-target="#admin-collection-content"
+          hx-swap="outerHTML"
+          hx-push-url="/quiz-admin/collections/registrations"
+          hx-on::before-request="document.getElementById('merge-entries-modal')?.classList.add('hidden')"
+        >
           <input type="hidden" name="registration_ids" value="{{.RegistrationIDs}}" />
           <label class="grid gap-1 text-sm">
             <span class="font-medium text-slate-700">New team name (optional)</span>
