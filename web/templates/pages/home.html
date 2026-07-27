@@ -1,17 +1,23 @@
+{{define "quiz_overview"}}
+<div id="quiz-content">
+  <section>
+    <h2 class="text-xl font-semibold">Available quiz dates</h2>
+    {{if .SetupError}}
+      <div class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{{.SetupError}}</div>
+    {{end}}
+    {{if .Quizzes}}
+      <div class="mt-4 grid gap-4 sm:grid-cols-2">
+        {{range .Quizzes}}
+          {{template "quiz_tile" .}}
+        {{end}}
+      </div>
+    {{else}}
+      <p class="mt-3 text-slate-600">No upcoming quizzes yet.</p>
+    {{end}}
+  </section>
+</div>
+{{end}}
+
 {{define "home"}}
-<section>
-  <h2 class="text-xl font-semibold">Available quiz dates</h2>
-  {{if .SetupError}}
-    <div class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{{.SetupError}}</div>
-  {{end}}
-  {{if .Quizzes}}
-    <div class="mt-4 grid gap-4 sm:grid-cols-2">
-      {{range .Quizzes}}
-        {{template "quiz_tile" .}}
-      {{end}}
-    </div>
-  {{else}}
-    <p class="mt-3 text-slate-600">No upcoming quizzes yet.</p>
-  {{end}}
-</section>
+{{template "quiz_overview" .}}
 {{end}}

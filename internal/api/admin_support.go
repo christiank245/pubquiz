@@ -145,6 +145,10 @@ func clearQuizAdminCookie(c echo.Context) {
 	})
 }
 
+func isHTMXRequest(c echo.Context) bool {
+	return strings.EqualFold(c.Request().Header.Get("HX-Request"), "true")
+}
+
 func deleteRegistrationsForQuizDate(app core.App, quizDateID string) error {
 	registrations, err := app.Dao().FindRecordsByFilter(
 		"registrations",
@@ -293,6 +297,20 @@ func loadAdminRecords(app core.App, collectionName string) ([]*models.Record, er
 	}
 }
 
+func renderAdminCollectionPage(c echo.Context, page AdminPageData, htmx bool) error {
+	data := PageData{
+		Title:               "Quiz Admin",
+		PageTemplate:        "admin_collection",
+		IsQuizAdmin:         true,
+		ShowQuizAdminLogout: true,
+		Admin:               page,
+	}
+	if htmx {
+		return renderAdminTemplate(c, "admin_collection_fragment", data)
+	}
+	return renderPageFn(c, data)
+}
+
 func renderAdminPageWithFormError(
 	c echo.Context,
 	app core.App,
@@ -304,6 +322,7 @@ func renderAdminPageWithFormError(
 	editRecordID string,
 	form AdminFormState,
 	errorMessage string,
+	htmx bool,
 ) error {
 	page, err := buildAdminPageData(app, collectionName, "", errorMessage, showCreate, editRecordID, form)
 	if err != nil {
@@ -316,13 +335,7 @@ func renderAdminPageWithFormError(
 	page.EditRecordID = editRecordID
 	page.Form = form
 
-	return renderPageFn(c, PageData{
-		Title:               "Quiz Admin",
-		PageTemplate:        "admin_collection",
-		IsQuizAdmin:         true,
-		ShowQuizAdminLogout: true,
-		Admin:               page,
-	})
+	return renderAdminCollectionPage(c, page, htmx)
 }
 
 func toCollectionNav(collections []*models.Collection) []AdminCollectionNav {

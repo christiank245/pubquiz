@@ -112,13 +112,7 @@ func (h adminHandlers) collectionGet(c echo.Context) error {
 		return err
 	}
 
-	return renderPageFn(c, PageData{
-		Title:               "Quiz Admin",
-		PageTemplate:        "admin_collection",
-		IsQuizAdmin:         true,
-		ShowQuizAdminLogout: true,
-		Admin:               page,
-	})
+	return renderAdminCollectionPage(c, page, isHTMXRequest(c))
 }
 
 func (h adminHandlers) collectionCreate(c echo.Context) error {
@@ -136,15 +130,23 @@ func (h adminHandlers) collectionCreate(c echo.Context) error {
 
 	tableFields, formFields := adminFields(collection)
 	form := parseAdminForm(c, formFields)
+	htmx := isHTMXRequest(c)
 
 	record := models.NewRecord(collection)
 	if err := applyFormToRecord(record, formFields, form); err != nil {
-		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, true, false, "", form, err.Error())
+		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, true, false, "", form, err.Error(), htmx)
 	}
 	if err := h.app.Dao().SaveRecord(record); err != nil {
-		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, true, false, "", form, err.Error())
+		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, true, false, "", form, err.Error(), htmx)
 	}
 
+	if htmx {
+		page, err := buildAdminPageData(h.app, collection.Name, "Entry created.", "", false, "", AdminFormState{})
+		if err != nil {
+			return err
+		}
+		return renderAdminCollectionPage(c, page, true)
+	}
 	return redirectWithMessage(c, collection.Name, "Entry created.", "")
 }
 
@@ -173,14 +175,22 @@ func (h adminHandlers) collectionUpdate(c echo.Context) error {
 
 	tableFields, formFields := adminFields(collection)
 	form := parseAdminForm(c, formFields)
+	htmx := isHTMXRequest(c)
 
 	if err := applyFormToRecord(record, formFields, form); err != nil {
-		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error())
+		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error(), htmx)
 	}
 	if err := h.app.Dao().SaveRecord(record); err != nil {
-		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error())
+		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error(), htmx)
 	}
 
+	if htmx {
+		page, err := buildAdminPageData(h.app, collection.Name, "Entry updated.", "", false, "", AdminFormState{})
+		if err != nil {
+			return err
+		}
+		return renderAdminCollectionPage(c, page, true)
+	}
 	return redirectWithMessage(c, collection.Name, "Entry updated.", "")
 }
 
@@ -191,6 +201,13 @@ func (h adminHandlers) registrationMergePost(c echo.Context) error {
 
 	registrationIDs, err := ParseRegistrationIDsInput(c.FormValue("registration_ids"))
 	if err != nil {
+		if isHTMXRequest(c) {
+			page, pageErr := buildAdminPageData(h.app, "registrations", "", err.Error(), false, "", AdminFormState{})
+			if pageErr != nil {
+				return pageErr
+			}
+			return renderAdminCollectionPage(c, page, true)
+		}
 		return redirectWithMessage(c, "registrations", "", err.Error())
 	}
 
@@ -209,11 +226,25 @@ func (h adminHandlers) registrationMergePost(c echo.Context) error {
 	if err != nil {
 		var reqErr MergeRequestError
 		if errors.As(err, &reqErr) {
+			if isHTMXRequest(c) {
+				page, pageErr := buildAdminPageData(h.app, "registrations", "", reqErr.Error(), false, "", AdminFormState{})
+				if pageErr != nil {
+					return pageErr
+				}
+				return renderAdminCollectionPage(c, page, true)
+			}
 			return redirectWithMessage(c, "registrations", "", reqErr.Error())
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to merge registrations")
 	}
 
+	if isHTMXRequest(c) {
+		page, err := buildAdminPageData(h.app, "registrations", fmt.Sprintf("Entries merged successfully into \"%s\".", mergedRecord.GetString("team_name")), "", false, "", AdminFormState{})
+		if err != nil {
+			return err
+		}
+		return renderAdminCollectionPage(c, page, true)
+	}
 	return redirectWithMessage(
 		c,
 		"registrations",
@@ -281,6 +312,13 @@ func (h adminHandlers) collectionDelete(c echo.Context) error {
 	}
 	deleteIDs := c.Request().Form["delete_ids"]
 	if len(deleteIDs) == 0 {
+		if isHTMXRequest(c) {
+			page, pageErr := buildAdminPageData(h.app, collection.Name, "", "Select at least one entry to delete.", false, "", AdminFormState{})
+			if pageErr != nil {
+				return pageErr
+			}
+			return renderAdminCollectionPage(c, page, true)
+		}
 		return redirectWithMessage(c, collection.Name, "", "Select at least one entry to delete.")
 	}
 
@@ -299,5 +337,12 @@ func (h adminHandlers) collectionDelete(c echo.Context) error {
 		}
 	}
 
+	if isHTMXRequest(c) {
+		page, err := buildAdminPageData(h.app, collection.Name, fmt.Sprintf("Deleted %d entrie(s).", len(deleteIDs)), "", false, "", AdminFormState{})
+		if err != nil {
+			return err
+		}
+		return renderAdminCollectionPage(c, page, true)
+	}
 	return redirectWithMessage(c, collection.Name, fmt.Sprintf("Deleted %d entrie(s).", len(deleteIDs)), "")
 }

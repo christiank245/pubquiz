@@ -46,21 +46,32 @@ func (h publicHandlers) home(c echo.Context) error {
 	if renderPageFn == nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "page renderer is not configured")
 	}
+	if renderTemplateFn == nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "template renderer is not configured")
+	}
 
 	quizzes, err := LoadUpcomingQuizzes(h.app)
 	if err != nil {
 		log.Printf("home load failed: %v", err)
-		return renderPageFn(c, PageData{
+		page := PageData{
 			Title:        "Pub Quiz Dates",
 			PageTemplate: "home",
 			SetupError:   "The database collections are not ready yet. Import pb_schema.json in the PocketBase Admin UI, then add locations and quiz dates.",
-		})
+		}
+		if isHTMXRequest(c) {
+			return renderTemplateFn(c, "quiz_overview", page)
+		}
+		return renderPageFn(c, page)
 	}
-	return renderPageFn(c, PageData{
+	page := PageData{
 		Title:        "Pub Quiz Dates",
 		PageTemplate: "home",
 		Quizzes:      quizzes,
-	})
+	}
+	if isHTMXRequest(c) {
+		return renderTemplateFn(c, "quiz_overview", page)
+	}
+	return renderPageFn(c, page)
 }
 
 func (h publicHandlers) quiz(c echo.Context) error {
@@ -78,9 +89,38 @@ func (h publicHandlers) quiz(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to load quiz")
 	}
 
+	if isHTMXRequest(c) {
+		return renderTemplateFn(c, "quiz_registration_detail", PageData{
+			Title: "Quiz Registration",
+			Quiz:  quiz,
+			Register: RegisterPanelData{
+				Quiz:      quiz,
+				TeamSize:  "1",
+				SeatsLeft: seatsLeft,
+			},
+		})
+	}
+
+	quizzes, err := LoadUpcomingQuizzes(h.app)
+	if err != nil {
+		log.Printf("quiz load failed: %v", err)
+		return renderPageFn(c, PageData{
+			Title:        "Quiz Registration",
+			PageTemplate: "quiz",
+			SetupError:   "The database collections are not ready yet. Import pb_schema.json in the PocketBase Admin UI, then add locations and quiz dates.",
+			Quiz:         quiz,
+			Register: RegisterPanelData{
+				Quiz:      quiz,
+				TeamSize:  "1",
+				SeatsLeft: seatsLeft,
+			},
+		})
+	}
+
 	return renderPageFn(c, PageData{
 		Title:        "Quiz Registration",
 		PageTemplate: "quiz",
+		Quizzes:      quizzes,
 		Quiz:         quiz,
 		Register: RegisterPanelData{
 			Quiz:      quiz,
@@ -101,7 +141,7 @@ func (h publicHandlers) register(c echo.Context) error {
 	teamSizeRaw := strings.TrimSpace(c.FormValue("team_size"))
 	confirmSplit := strings.EqualFold(strings.TrimSpace(c.FormValue("confirm_split")), "true")
 	confirmMerge := strings.TrimSpace(c.FormValue("confirm_merge"))
-	isHTMX := strings.EqualFold(c.Request().Header.Get("HX-Request"), "true")
+	isHTMX := isHTMXRequest(c)
 
 	quiz, seatsLeft, err := LoadQuiz(h.app, quizID)
 	if err != nil {
