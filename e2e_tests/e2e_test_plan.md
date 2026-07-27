@@ -3,10 +3,11 @@
 ## Purpose
 This plan covers the full browser-visible behavior of the pub quiz website:
 - public discovery and registration
+- public navigation and informational pages
 - split-team and merge-consent flows
 - capacity and auto-close rules
 - unregister flow
-- quiz admin login, navigation, CRUD, merge, and delete workflows
+- quiz admin login, navigation, CRUD, merge, delete workflows, and admin menu/logout
 - error and empty states
 
 The goal is to verify the app as a user would experience it, not just the underlying handlers.
@@ -29,14 +30,15 @@ The goal is to verify the app as a user would experience it, not just the underl
 | Area | What must be verified |
 | --- | --- |
 | Public home | quiz tiles, empty state, setup error state, HTMX navigation |
+| Public navigation | hamburger menu, About Us, Contact Us, Privacy Policy, Quiz Admin link |
 | Quiz detail | location, maps link, seats left, registration panel, back link |
 | Registration | required fields, invalid values, capacity checks, success state |
 | Split teams | prompt, custom split names, final registration creation |
 | Merge consent | prompt for teams under 4, yes/no handling |
 | Auto-close | close when full, close within 1 hour of start |
 | Unregister | confirmation page, delete action, missing record handling |
-| Admin auth | login, invalid credentials, logout, route protection |
-| Admin collections | sidebar, row click edit, create modal, delete modal |
+| Admin auth | login, invalid credentials, logout via admin menu, route protection |
+| Admin collections | sidebar, row click edit, create modal, delete modal, admin menu |
 | Locations | create, update, delete, readable values |
 | Quiz dates | create, update, delete, relation dropdown, cascade delete |
 | Registrations | edit, merge preview, merge execution, delete, readable relations |
@@ -49,7 +51,7 @@ The goal is to verify the app as a user would experience it, not just the underl
 #### E2E-PUB-01: Load the home page
 - Open `/`.
 - Verify the page title and public header render.
-- Verify the header contains links to Quiz Admin and System Admin.
+- Verify the header contains the hamburger menu with Home, About Us, Contact Us, Privacy Policy, Quiz Admin, and System Admin.
 - Verify upcoming quiz cards are shown when quizzes exist.
 - Verify each card shows:
   - quiz date/time
@@ -69,7 +71,12 @@ The goal is to verify the app as a user would experience it, not just the underl
 - Verify the setup error banner is shown.
 - Verify the message instructs the user to import the schema and create locations/quiz dates.
 
-#### E2E-PUB-04: Open a quiz via HTMX
+#### E2E-PUB-04: Verify informational pages load
+- Open `/about`, `/contact`, and `/privacy`.
+- Verify each page renders its expected heading and placeholder/body copy.
+- Verify the public header menu is still present on each page.
+
+#### E2E-PUB-05: Open a quiz via HTMX
 - Open `/`.
 - Click a quiz tile.
 - Verify the content swaps into `#quiz-content`.
@@ -85,11 +92,16 @@ The goal is to verify the app as a user would experience it, not just the underl
 - Verify seats left are shown.
 - Verify the back link to all quiz dates is visible.
 
-#### E2E-QUIZ-02: Reject missing quiz id
+#### E2E-QUIZ-02: Verify public menu on quiz pages
+- Open `/quiz?id=<quizId>`.
+- Verify the hamburger menu is visible in the header.
+- Verify the menu contains the public informational links and Quiz Admin.
+
+#### E2E-QUIZ-03: Reject missing quiz id
 - Open `/quiz` without an id.
 - Verify the request fails with a bad request style error.
 
-#### E2E-QUIZ-03: Reject closed or unknown quizzes
+#### E2E-QUIZ-04: Reject closed or unknown quizzes
 - Open `/quiz?id=<unknown-or-closed-id>`.
 - Verify the app does not show the registration form.
 - Verify the user sees an error or closed-quiz response.
@@ -235,13 +247,13 @@ The goal is to verify the app as a user would experience it, not just the underl
 #### E2E-LAYOUT-01: Verify the public header
 - Open the home page and quiz page.
 - Verify the public header shows the app name and summary text.
-- Verify the Quiz Admin and System Admin links are visible.
+- Verify the hamburger menu is visible and exposes the public navigation links plus Quiz Admin and System Admin.
 
 #### E2E-LAYOUT-02: Verify the admin header
 - After login, open any admin page.
 - Verify the admin header shows Quiz Admin.
-- Verify the Public website link is visible.
-- Verify the Logout button is visible.
+- Verify the admin hamburger menu is visible.
+- Verify the menu contains Dashboard, Public website, and Logout.
 
 ### Admin login and authorization
 
@@ -261,7 +273,7 @@ The goal is to verify the app as a user would experience it, not just the underl
 
 #### E2E-ADMIN-04: Logout clears the session
 - Log in successfully.
-- Click Logout.
+- Open the admin hamburger menu and click Logout.
 - Verify the app returns to the login page.
 - Verify protected routes are no longer accessible without login.
 
@@ -275,6 +287,7 @@ The goal is to verify the app as a user would experience it, not just the underl
 - Open the admin home after login.
 - Verify the sidebar lists only non-system, non-auth collections.
 - Verify `quiz_admins`, `users`, and other protected system collections are hidden.
+- Verify the admin menu remains available from the collection pages.
 
 #### E2E-COL-02: Navigate between collections
 - Click different sidebar entries.

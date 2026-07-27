@@ -16,20 +16,52 @@
           <div>
             <h1 class="text-2xl font-bold">Quiz Admin</h1>
             <p class="mt-1 text-sm text-slate-300">Manage quiz data across collections.</p>
-            <a class="mt-3 inline-block text-sm text-cyan-300 underline" href="/">Public website</a>
           </div>
-          {{if .ShowQuizAdminLogout}}
-            <form method="post" action="/quiz-admin/logout">
-              <button class="rounded-md border border-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800" type="submit">Logout</button>
-            </form>
-          {{end}}
+          <details class="relative">
+            <summary class="flex cursor-pointer list-none items-center justify-center rounded-md border border-slate-600 p-2 text-slate-200 hover:bg-slate-800">
+              <span class="sr-only">Open admin menu</span>
+              <span class="grid gap-1.5">
+                <span class="h-0.5 w-5 bg-current"></span>
+                <span class="h-0.5 w-5 bg-current"></span>
+                <span class="h-0.5 w-5 bg-current"></span>
+              </span>
+            </summary>
+            <div class="absolute right-0 z-20 mt-3 w-56 rounded-lg border border-slate-700 bg-slate-800 p-2 shadow-xl">
+              <a class="block rounded-md px-3 py-2 text-sm text-slate-100 hover:bg-slate-700" href="/quiz-admin">Dashboard</a>
+              <a class="block rounded-md px-3 py-2 text-sm text-slate-100 hover:bg-slate-700" href="/">Public website</a>
+              {{if .ShowQuizAdminLogout}}
+                <div class="my-2 border-t border-slate-700"></div>
+                <form method="post" action="/quiz-admin/logout">
+                  <button class="block w-full rounded-md px-3 py-2 text-left text-sm text-slate-100 hover:bg-slate-700" type="submit">Logout</button>
+                </form>
+              {{end}}
+            </div>
+          </details>
         </div>
       {{else}}
-        <h1 class="text-2xl font-bold">Pub Quiz Signup</h1>
-        <p class="mt-1 text-sm text-slate-300">Pick a date and register your team.</p>
-        <div class="mt-3 flex gap-3 text-sm">
-          <a class="text-cyan-300 underline" href="/quiz-admin">Quiz Admin</a>
-          <a class="text-cyan-300 underline" href="/_/">System Admin (PocketBase)</a>
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h1 class="text-2xl font-bold">Pub Quiz Signup</h1>
+            <p class="mt-1 text-sm text-slate-300">Pick a date and register your team.</p>
+          </div>
+          <details class="relative">
+            <summary class="flex cursor-pointer list-none items-center justify-center rounded-md border border-slate-600 p-2 text-slate-200 hover:bg-slate-800">
+              <span class="sr-only">Open navigation menu</span>
+              <span class="grid gap-1.5">
+                <span class="h-0.5 w-5 bg-current"></span>
+                <span class="h-0.5 w-5 bg-current"></span>
+                <span class="h-0.5 w-5 bg-current"></span>
+              </span>
+            </summary>
+            <div class="absolute right-0 z-20 mt-3 w-56 rounded-lg border border-slate-700 bg-slate-800 p-2 shadow-xl">
+              <a class="block rounded-md px-3 py-2 text-sm text-slate-100 hover:bg-slate-700 {{if eq .PageTemplate "home"}}bg-slate-700{{end}}" href="/">Home</a>
+              <a class="block rounded-md px-3 py-2 text-sm text-slate-100 hover:bg-slate-700 {{if eq .PageTemplate "about"}}bg-slate-700{{end}}" href="/about">About Us</a>
+              <a class="block rounded-md px-3 py-2 text-sm text-slate-100 hover:bg-slate-700 {{if eq .PageTemplate "contact"}}bg-slate-700{{end}}" href="/contact">Contact Us</a>
+              <a class="block rounded-md px-3 py-2 text-sm text-slate-100 hover:bg-slate-700 {{if eq .PageTemplate "privacy"}}bg-slate-700{{end}}" href="/privacy">Privacy Policy</a>
+              <div class="my-2 border-t border-slate-700"></div>
+              <a class="block rounded-md px-3 py-2 text-sm text-slate-100 hover:bg-slate-700" href="/quiz-admin">Quiz Admin</a>
+            </div>
+          </details>
         </div>
       {{end}}
     </div>
