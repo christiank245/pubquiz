@@ -25,11 +25,8 @@ func main() {
 
 		e.Router.GET("/assets/*", apis.StaticDirectoryHandler(assetFS, false))
 
-		routeapi.SetPublicRenderers(renderPage, renderRegisterPanel)
-		routeapi.SetAdminTemplateRenderer(renderTemplate)
-
-		routeapi.RegisterPublicRoutes(e.Router, routeapi.BuildPublicHandlers(app))
-		routeapi.RegisterAdminRoutes(e.Router, routeapi.BuildAdminHandlers(app))
+		routeapi.RegisterPublicRoutes(e.Router, routeapi.BuildPublicHandlers(app, renderPage, renderRegisterPanel, renderTemplate))
+		routeapi.RegisterAdminRoutes(e.Router, routeapi.BuildAdminHandlers(app, renderPage, renderTemplate))
 
 		return nil
 	})

@@ -297,7 +297,21 @@ func loadAdminRecords(app core.App, collectionName string) ([]*models.Record, er
 	}
 }
 
-func renderAdminCollectionPage(c echo.Context, page AdminPageData, htmx bool) error {
+func (h adminHandlers) renderPage(c echo.Context, data PageData) error {
+	if h.renderers.page == nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "page renderer is not configured")
+	}
+	return h.renderers.page(c, data)
+}
+
+func (h adminHandlers) renderAdminTemplate(c echo.Context, templateName string, data any) error {
+	if h.renderers.template == nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "template renderer is not configured")
+	}
+	return h.renderers.template(c, templateName, data)
+}
+
+func (h adminHandlers) renderAdminCollectionPage(c echo.Context, page AdminPageData, htmx bool) error {
 	data := PageData{
 		Title:               "Quiz Admin",
 		PageTemplate:        "admin_collection",
@@ -306,12 +320,12 @@ func renderAdminCollectionPage(c echo.Context, page AdminPageData, htmx bool) er
 		Admin:               page,
 	}
 	if htmx {
-		return renderAdminTemplate(c, "admin_collection_fragment", data)
+		return h.renderAdminTemplate(c, "admin_collection_fragment", data)
 	}
-	return renderPageFn(c, data)
+	return h.renderPage(c, data)
 }
 
-func renderAdminPageWithFormError(
+func (h adminHandlers) renderAdminPageWithFormError(
 	c echo.Context,
 	app core.App,
 	collectionName string,
@@ -335,7 +349,7 @@ func renderAdminPageWithFormError(
 	page.EditRecordID = editRecordID
 	page.Form = form
 
-	return renderAdminCollectionPage(c, page, htmx)
+	return h.renderAdminCollectionPage(c, page, htmx)
 }
 
 func toCollectionNav(collections []*models.Collection) []AdminCollectionNav {
@@ -709,13 +723,6 @@ func relationRecordLabel(app core.App, relatedCollection *models.Collection, rec
 	return record.Id, nil
 }
 
-func renderAdminTemplate(c echo.Context, templateName string, data any) error {
-	if renderTemplateFn == nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "template renderer is not configured")
-	}
-	return renderTemplateFn(c, templateName, data)
-}
-
 func buildRegistrationMergeSelection(app core.App, selectedIDs []string) (AdminMergeModalData, error) {
 	normalizedIDs, err := NormalizeRegistrationIDs(selectedIDs)
 	if err != nil {
@@ -822,32 +829,4 @@ func redirectWithMessage(c echo.Context, collectionName, successMessage, errorMe
 		redirectURL += "?" + encoded
 	}
 	return c.Redirect(http.StatusSeeOther, redirectURL)
-}
-
-func FormatDateTimeInputValue(raw string) string {
-	return formatDateTimeInputValue(raw)
-}
-
-func FormatGermanDateTimeLabel(raw string) string {
-	return formatGermanDateTimeLabel(raw)
-}
-
-func NormalizeDateTimeInput(raw string) (string, error) {
-	return normalizeDateTimeInput(raw)
-}
-
-func FormatAdminValue(value any) string {
-	return formatAdminValue(value)
-}
-
-func FormatRelationValue(value any, relationLabels map[string]string, multiple bool) string {
-	return formatRelationValue(value, relationLabels, multiple)
-}
-
-func NormalizeStringSlice(value any) []string {
-	return normalizeStringSlice(value)
-}
-
-func SplitCSVValues(raw string) []string {
-	return splitCSVValues(raw)
 }

@@ -14,11 +14,22 @@ import (
 )
 
 type adminHandlers struct {
-	app core.App
+	app       core.App
+	renderers routeRenderers
 }
 
-func BuildAdminHandlers(app core.App) AdminHandlers {
-	h := adminHandlers{app: app}
+func BuildAdminHandlers(
+	app core.App,
+	pageRenderer func(c echo.Context, data PageData) error,
+	templateRenderer func(c echo.Context, templateName string, data any) error,
+) AdminHandlers {
+	h := adminHandlers{
+		app: app,
+		renderers: routeRenderers{
+			page:     pageRenderer,
+			template: templateRenderer,
+		},
+	}
 	return AdminHandlers{
 		Index:                           h.index,
 		LoginGet:                        h.loginGet,
@@ -45,7 +56,7 @@ func (h adminHandlers) index(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load collections")
 	}
 	if len(collections) == 0 {
-		return renderPageFn(c, PageData{
+		return h.renderPage(c, PageData{
 			Title:               "Quiz Admin",
 			PageTemplate:        "admin_collection",
 			IsQuizAdmin:         true,
@@ -63,7 +74,7 @@ func (h adminHandlers) loginGet(c echo.Context) error {
 	if _, err := currentQuizAdmin(c, h.app); err == nil {
 		return c.Redirect(http.StatusSeeOther, "/quiz-admin")
 	}
-	return renderPageFn(c, PageData{
+	return h.renderPage(c, PageData{
 		Title:        "Quiz Admin Login",
 		PageTemplate: "admin_login",
 		IsQuizAdmin:  true,
@@ -77,7 +88,7 @@ func (h adminHandlers) loginPost(c echo.Context) error {
 
 	record, err := h.app.Dao().FindAuthRecordByEmail(quizAdminAuthCollection, email)
 	if err != nil || !record.ValidatePassword(password) {
-		return renderPageFn(c, PageData{
+		return h.renderPage(c, PageData{
 			Title:        "Quiz Admin Login",
 			PageTemplate: "admin_login",
 			IsQuizAdmin:  true,
@@ -112,7 +123,7 @@ func (h adminHandlers) collectionGet(c echo.Context) error {
 		return err
 	}
 
-	return renderAdminCollectionPage(c, page, isHTMXRequest(c))
+	return h.renderAdminCollectionPage(c, page, isHTMXRequest(c))
 }
 
 func (h adminHandlers) collectionCreate(c echo.Context) error {
@@ -134,10 +145,10 @@ func (h adminHandlers) collectionCreate(c echo.Context) error {
 
 	record := models.NewRecord(collection)
 	if err := applyFormToRecord(record, formFields, form); err != nil {
-		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, true, false, "", form, err.Error(), htmx)
+		return h.renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, true, false, "", form, err.Error(), htmx)
 	}
 	if err := h.app.Dao().SaveRecord(record); err != nil {
-		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, true, false, "", form, err.Error(), htmx)
+		return h.renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, true, false, "", form, err.Error(), htmx)
 	}
 
 	if htmx {
@@ -145,7 +156,7 @@ func (h adminHandlers) collectionCreate(c echo.Context) error {
 		if err != nil {
 			return err
 		}
-		return renderAdminCollectionPage(c, page, true)
+		return h.renderAdminCollectionPage(c, page, true)
 	}
 	return redirectWithMessage(c, collection.Name, "Entry created.", "")
 }
@@ -178,10 +189,10 @@ func (h adminHandlers) collectionUpdate(c echo.Context) error {
 	htmx := isHTMXRequest(c)
 
 	if err := applyFormToRecord(record, formFields, form); err != nil {
-		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error(), htmx)
+		return h.renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error(), htmx)
 	}
 	if err := h.app.Dao().SaveRecord(record); err != nil {
-		return renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error(), htmx)
+		return h.renderAdminPageWithFormError(c, h.app, collection.Name, tableFields, formFields, false, true, recordID, form, err.Error(), htmx)
 	}
 
 	if htmx {
@@ -189,7 +200,7 @@ func (h adminHandlers) collectionUpdate(c echo.Context) error {
 		if err != nil {
 			return err
 		}
-		return renderAdminCollectionPage(c, page, true)
+		return h.renderAdminCollectionPage(c, page, true)
 	}
 	return redirectWithMessage(c, collection.Name, "Entry updated.", "")
 }
@@ -206,7 +217,7 @@ func (h adminHandlers) registrationMergePost(c echo.Context) error {
 			if pageErr != nil {
 				return pageErr
 			}
-			return renderAdminCollectionPage(c, page, true)
+			return h.renderAdminCollectionPage(c, page, true)
 		}
 		return redirectWithMessage(c, "registrations", "", err.Error())
 	}
@@ -231,7 +242,7 @@ func (h adminHandlers) registrationMergePost(c echo.Context) error {
 				if pageErr != nil {
 					return pageErr
 				}
-				return renderAdminCollectionPage(c, page, true)
+				return h.renderAdminCollectionPage(c, page, true)
 			}
 			return redirectWithMessage(c, "registrations", "", reqErr.Error())
 		}
@@ -243,7 +254,7 @@ func (h adminHandlers) registrationMergePost(c echo.Context) error {
 		if err != nil {
 			return err
 		}
-		return renderAdminCollectionPage(c, page, true)
+		return h.renderAdminCollectionPage(c, page, true)
 	}
 	return redirectWithMessage(
 		c,
@@ -266,7 +277,7 @@ func (h adminHandlers) registrationMergeButtonPost(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to evaluate merge selection")
 	}
 
-	return renderAdminTemplate(c, "admin_merge_entries_button", AdminMergeButtonData{
+	return h.renderAdminTemplate(c, "admin_merge_entries_button", AdminMergeButtonData{
 		Enabled: selection.Error == "" && len(selection.Entries) >= 2,
 	})
 }
@@ -284,7 +295,7 @@ func (h adminHandlers) registrationMergeModalPost(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to build merge preview")
 	}
 
-	return renderAdminTemplate(c, "admin_merge_entries_modal", selection)
+	return h.renderAdminTemplate(c, "admin_merge_entries_modal", selection)
 }
 
 func (h adminHandlers) registrationMergeModalClosePost(c echo.Context) error {
@@ -317,7 +328,7 @@ func (h adminHandlers) collectionDelete(c echo.Context) error {
 			if pageErr != nil {
 				return pageErr
 			}
-			return renderAdminCollectionPage(c, page, true)
+			return h.renderAdminCollectionPage(c, page, true)
 		}
 		return redirectWithMessage(c, collection.Name, "", "Select at least one entry to delete.")
 	}
@@ -342,7 +353,7 @@ func (h adminHandlers) collectionDelete(c echo.Context) error {
 		if err != nil {
 			return err
 		}
-		return renderAdminCollectionPage(c, page, true)
+		return h.renderAdminCollectionPage(c, page, true)
 	}
 	return redirectWithMessage(c, collection.Name, fmt.Sprintf("Deleted %d entrie(s).", len(deleteIDs)), "")
 }
