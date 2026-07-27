@@ -12,28 +12,17 @@
 
 {{define "admin_collection_sidebar"}}
   <aside id="admin-collection-sidebar" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-    <h2 class="text-sm font-semibold uppercase text-slate-500">Collections</h2>
-    <ul class="mt-3 grid gap-1">
-      {{range .Admin.Collections}}
-        <li>
-          <a
-            href="/quiz-admin/collections/{{.Name}}"
-            hx-get="/quiz-admin/collections/{{.Name}}"
-            hx-target="#admin-collection-content"
-            hx-swap="outerHTML"
-            hx-push-url="true"
-            class="block rounded-md px-3 py-2 text-sm {{if eq $.Admin.ActiveCollection .Name}}bg-slate-900 text-white{{else}}text-slate-700 hover:bg-slate-100{{end}}"
-          >
-            {{.Name}}
-          </a>
-        </li>
-      {{end}}
-    </ul>
+    {{template "admin_collection_sidebar_inner" .}}
   </aside>
 {{end}}
 
 {{define "admin_collection_sidebar_oob"}}
   <aside id="admin-collection-sidebar" hx-swap-oob="outerHTML" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    {{template "admin_collection_sidebar_inner" .}}
+  </aside>
+{{end}}
+
+{{define "admin_collection_sidebar_inner"}}
     <h2 class="text-sm font-semibold uppercase text-slate-500">Collections</h2>
     <ul class="mt-3 grid gap-1">
       {{range .Admin.Collections}}
@@ -51,7 +40,6 @@
         </li>
       {{end}}
     </ul>
-  </aside>
 {{end}}
 
 {{define "admin_collection_content"}}
