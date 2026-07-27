@@ -132,6 +132,8 @@ If the user chooses to wrap up the session:
 - PocketBase custom routes and API endpoints.
 - Capacity limit validations during team registration.
 - Admin authorization and CRUD operations.
+- After any code change, always run the full relevant test suite before wrapping up.
+- If a test fails, debug the code change first; only modify tests when the product behavior truly needs to change.
 
 ---
 
