@@ -8,8 +8,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,16 +23,19 @@ import (
 )
 
 type playwrightE2EEnv struct {
-	baseURL string
-	dataDir string
-	appCmd  *exec.Cmd
-	appLogs bytes.Buffer
+	baseURL     string
+	dataDir     string
+	videoDir    string
+	recordVideo bool
+	appCmd      *exec.Cmd
+	appLogs     bytes.Buffer
 
 	pw      *playwright.Playwright
 	browser playwright.Browser
 
 	quizAdminEmail    string
 	quizAdminPassword string
+	systemAdminToken  string
 }
 
 func (env *playwrightE2EEnv) setup() {
@@ -46,6 +53,15 @@ func (env *playwrightE2EEnv) setup() {
 		_ = os.RemoveAll(env.dataDir)
 	})
 
+	env.recordVideo = strings.TrimSpace(os.Getenv("PLAYWRIGHT_E2E_RECORD_VIDEO")) == "1"
+	if env.recordVideo {
+		cwd, err := os.Getwd()
+		Expect(err).NotTo(HaveOccurred())
+		env.videoDir = filepath.Join(cwd, ".playwright-videos", time.Now().Format("20060102-150405"))
+		Expect(os.MkdirAll(env.videoDir, 0o755)).To(Succeed())
+		GinkgoWriter.Printf("Playwright videos will be written to %s\n", env.videoDir)
+	}
+
 	env.appCmd = exec.Command("go", "run", "..", "serve", "--http", fmt.Sprintf("127.0.0.1:%d", port), "--dir", env.dataDir, "--dev=false")
 	env.appCmd.Stdout = &env.appLogs
 	env.appCmd.Stderr = &env.appLogs
@@ -58,17 +74,47 @@ func (env *playwrightE2EEnv) setup() {
 
 	adminToken, err := loginSystemAdmin(env.baseURL, systemAdminEmail, systemAdminPassword)
 	Expect(err).NotTo(HaveOccurred())
+	env.systemAdminToken = adminToken
 
 	env.quizAdminEmail = fmt.Sprintf("quizadmin-%d@example.com", time.Now().UnixNano())
 	env.quizAdminPassword = "Password123!"
-	Expect(createQuizAdminRecord(env.baseURL, adminToken, env.quizAdminEmail, env.quizAdminPassword)).To(Succeed())
+	username := strings.Split(env.quizAdminEmail, "@")[0]
+	body, err := json.Marshal(map[string]string{
+		"username":        username,
+		"email":           env.quizAdminEmail,
+		"password":        env.quizAdminPassword,
+		"passwordConfirm": env.quizAdminPassword,
+	})
+	Expect(err).NotTo(HaveOccurred())
+
+	req, err := http.NewRequest(http.MethodPost, env.baseURL+"/api/collections/quiz_admins/records", bytes.NewReader(body))
+	Expect(err).NotTo(HaveOccurred())
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	Expect(err).NotTo(HaveOccurred())
+	defer resp.Body.Close()
+	responseBody, _ := io.ReadAll(resp.Body)
+	Expect(resp.StatusCode).To(BeNumerically("<", http.StatusBadRequest), strings.TrimSpace(string(responseBody)))
 
 	Expect(playwright.Install()).To(Succeed())
 	env.pw, err = playwright.Run()
 	Expect(err).NotTo(HaveOccurred())
 
-	env.browser, err = env.pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+	launchOptions := playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(true),
+	}
+	if slowMoMS := strings.TrimSpace(os.Getenv("PLAYWRIGHT_E2E_SLOWMO_MS")); slowMoMS != "" {
+		ms, parseErr := strconv.Atoi(slowMoMS)
+		Expect(parseErr).NotTo(HaveOccurred())
+		Expect(ms).To(BeNumerically(">", 0))
+		launchOptions.SlowMo = playwright.Float(float64(ms))
+	}
+
+	env.browser, err = env.pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+		Headless: launchOptions.Headless,
+		SlowMo:   launchOptions.SlowMo,
 	})
 	Expect(err).NotTo(HaveOccurred())
 }
@@ -84,6 +130,96 @@ func (env *playwrightE2EEnv) cleanup() {
 		_ = env.appCmd.Process.Kill()
 		_, _ = env.appCmd.Process.Wait()
 	}
+}
+
+func (env *playwrightE2EEnv) newPage() (playwright.Page, func() error, error) {
+	specName := sanitizeVideoName(CurrentSpecReport().FullText())
+	var context playwright.BrowserContext
+	var err error
+	if env.recordVideo {
+		context, err = env.browser.NewContext(playwright.BrowserNewContextOptions{
+			RecordVideo: &playwright.RecordVideo{
+				Dir: playwright.String(env.videoDir),
+				Size: &playwright.Size{
+					Width:  1280,
+					Height: 720,
+				},
+				ShowActions: &playwright.ShowAction{
+					Duration: playwright.Float(1000),
+					Position: playwright.AnnotatePositionTopRight,
+					FontSize: playwright.Int(20),
+				},
+			},
+		})
+	} else {
+		context, err = env.browser.NewContext()
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	page, err := context.NewPage()
+	if err != nil {
+		_ = context.Close()
+		return nil, nil, err
+	}
+
+	cleanup := func() error {
+		if err := page.Close(); err != nil {
+			_ = context.Close()
+			return err
+		}
+		if err := context.Close(); err != nil {
+			return err
+		}
+		if env.recordVideo {
+			return renameRecordedVideo(env.videoDir, specName)
+		}
+		return nil
+	}
+
+	return page, cleanup, nil
+}
+
+func renameRecordedVideo(recordDir, specName string) error {
+	entries, err := os.ReadDir(recordDir)
+	if err != nil {
+		return err
+	}
+	var videoPath string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(strings.ToLower(name), ".webm") {
+			videoPath = filepath.Join(recordDir, name)
+			break
+		}
+	}
+	if videoPath == "" {
+		return fmt.Errorf("no video file found in %s", recordDir)
+	}
+
+	targetPath := filepath.Join(recordDir, specName+".webm")
+	if err := os.RemoveAll(targetPath); err != nil {
+		return err
+	}
+	if videoPath == targetPath {
+		return nil
+	}
+	return os.Rename(videoPath, targetPath)
+}
+
+func sanitizeVideoName(value string) string {
+	replacer := regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+	cleaned := strings.TrimSpace(value)
+	cleaned = replacer.ReplaceAllString(cleaned, "-")
+	cleaned = strings.Trim(cleaned, "-_.")
+	if cleaned == "" {
+		return "spec"
+	}
+	return cleaned
 }
 
 func freeLocalPort() (int, error) {
@@ -161,81 +297,6 @@ func registerNormalTeam(page playwright.Page, baseURL, teamName, email, size str
 	return page.Locator(`#registration-panel >> text=Registration successful`).First().WaitFor()
 }
 
-func registerSmallTeamWithMergeConsent(page playwright.Page, baseURL, teamName, email string) error {
-	_, err := page.Goto(baseURL, playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
-	if err != nil {
-		return err
-	}
-	if err := page.Locator(`a:has-text("Register team")`).First().Click(); err != nil {
-		return err
-	}
-	if err := page.Locator(`input[name="email"]`).Fill(email); err != nil {
-		return err
-	}
-	if err := page.Locator(`input[name="team_name"]`).Fill(teamName); err != nil {
-		return err
-	}
-	if err := page.Locator(`input[name="team_size"]`).Fill("3"); err != nil {
-		return err
-	}
-	if err := page.Locator(`button:has-text("Register")`).Click(); err != nil {
-		return err
-	}
-	if err := page.Locator(`text=Small teams (fewer than 4 people)`).First().WaitFor(); err != nil {
-		return err
-	}
-	if err := page.Locator(`button:has-text("Yes, we can be merged")`).Click(); err != nil {
-		return err
-	}
-	return page.Locator(`#registration-panel >> text=Registration successful`).First().WaitFor()
-}
-
-func fillRequiredInputInScope(page playwright.Page, scopeSelector, inputName, value string) error {
-	targetSelector := fmt.Sprintf(`%s input[name="%s"]`, scopeSelector, inputName)
-	target := page.Locator(targetSelector)
-
-	count, err := target.Count()
-	if err != nil {
-		return fmt.Errorf("failed checking selector %q: %w", targetSelector, err)
-	}
-	if count == 0 {
-		foundNames, namesErr := inputNamesInScope(page, scopeSelector)
-		if namesErr != nil {
-			return fmt.Errorf("expected input[name=%q] in %s, but it was not found", inputName, scopeSelector)
-		}
-		return fmt.Errorf("expected input[name=%q] in %s, but found input names: %s", inputName, scopeSelector, strings.Join(foundNames, ", "))
-	}
-
-	if err := target.First().Fill(value); err != nil {
-		return fmt.Errorf("failed filling input[name=%q] in %s: %w", inputName, scopeSelector, err)
-	}
-	return nil
-}
-
-func inputNamesInScope(page playwright.Page, scopeSelector string) ([]string, error) {
-	raw, err := page.Locator(scopeSelector).Locator("input[name]").EvaluateAll(`elements => elements.map((el) => el.getAttribute("name") || "")`)
-	if err != nil {
-		return nil, err
-	}
-
-	rawNames, ok := raw.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("unexpected evaluateAll result type: %T", raw)
-	}
-
-	names := make([]string, 0, len(rawNames))
-	for _, item := range rawNames {
-		name, ok := item.(string)
-		if ok && strings.TrimSpace(name) != "" {
-			names = append(names, name)
-		}
-	}
-	if len(names) == 0 {
-		return []string{"(none)"}, nil
-	}
-	return names, nil
-}
-
 func createSystemAdminAccount(dataDir, email, password string) error {
 	cmd := exec.Command("go", "run", "..", "--dir", dataDir, "--dev=false", "admin", "create", email, password)
 	output, err := cmd.CombinedOutput()
@@ -285,19 +346,87 @@ func loginSystemAdmin(baseURL, email, password string) (string, error) {
 	return payload.Token, nil
 }
 
-func createQuizAdminRecord(baseURL, adminToken, email, password string) error {
-	username := strings.Split(email, "@")[0]
-	body, err := json.Marshal(map[string]string{
-		"username":        username,
-		"email":           email,
-		"password":        password,
-		"passwordConfirm": password,
-	})
+type collectionRecordsResponse struct {
+	Items []map[string]any `json:"items"`
+}
+
+func createCollectionRecord(baseURL, adminToken, collection string, payload any) (string, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	endpoint := fmt.Sprintf("%s/api/collections/%s/records", strings.TrimRight(baseURL, "/"), url.PathEscape(collection))
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return "", fmt.Errorf("create %s record failed with status %d: %s", collection, resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(responseBody, &created); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(created.ID) == "" {
+		return "", fmt.Errorf("create %s record returned empty id", collection)
+	}
+	return created.ID, nil
+}
+
+func listCollectionRecords(baseURL, adminToken, collection string) ([]map[string]any, error) {
+	endpoint := fmt.Sprintf("%s/api/collections/%s/records", strings.TrimRight(baseURL, "/"), url.PathEscape(collection))
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("list %s records failed with status %d: %s", collection, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var payload collectionRecordsResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	return payload.Items, nil
+}
+
+func updateCollectionRecord(baseURL, adminToken, collection, recordID string, payload any) error {
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/collections/quiz_admins/records", bytes.NewReader(body))
+	endpoint := fmt.Sprintf("%s/api/collections/%s/records/%s", strings.TrimRight(baseURL, "/"), url.PathEscape(collection), url.PathEscape(recordID))
+	req, err := http.NewRequest(http.MethodPatch, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -309,9 +438,61 @@ func createQuizAdminRecord(baseURL, adminToken, email, password string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(resp.Body)
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("create quiz admin failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		return fmt.Errorf("update %s record %s failed with status %d: %s", collection, recordID, resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
+func deleteCollectionRecord(baseURL, adminToken, collection, recordID string) error {
+	endpoint := fmt.Sprintf("%s/api/collections/%s/records/%s", strings.TrimRight(baseURL, "/"), url.PathEscape(collection), url.PathEscape(recordID))
+	req, err := http.NewRequest(http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("delete %s record %s failed with status %d: %s", collection, recordID, resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
+func deleteCollection(baseURL, adminToken, collection string) error {
+	endpoint := fmt.Sprintf("%s/api/collections/%s", strings.TrimRight(baseURL, "/"), url.PathEscape(collection))
+	req, err := http.NewRequest(http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("delete collection %s failed with status %d: %s", collection, resp.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	return nil
 }

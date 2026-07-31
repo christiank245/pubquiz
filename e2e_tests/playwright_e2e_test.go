@@ -10,11 +10,23 @@ var _ = Describe("playwright e2e", Ordered, func() {
 	BeforeAll(env.setup)
 	AfterAll(env.cleanup)
 
-	Describe("UI", func() {
-		defineUITests(env)
+	Describe("Public", func() {
+		definePublicTests(env)
 	})
 
-	Describe("Functionality", func() {
-		defineFunctionalityTests(env)
+	Describe("Admin general", func() {
+		defineAdminGeneralTests(env)
+	})
+
+	Describe("Admin locations", func() {
+		defineAdminLocationTests(env)
+	})
+
+	Describe("Admin quiz dates", func() {
+		defineAdminQuizDateTests(env)
+	})
+
+	Describe("Admin registrations", func() {
+		defineAdminRegistrationTests(env)
 	})
 })

@@ -9,6 +9,9 @@
     <div class="mt-4 rounded-md border border-green-300 bg-green-50 p-3 text-green-800">{{.Success}}</div>
   {{else}}
     {{if .ShowSplitPrompt}}
+      {{if .Error}}
+        <div class="mt-4 rounded-md border border-red-300 bg-red-50 p-3 text-red-800">{{.Error}}</div>
+      {{end}}
       <div class="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
         Teams can have at most 10 people. Your group can be split into {{.SplitTeamCount}} teams with sizes: {{.SplitSizesLabel}}. Do you want to continue?
       </div>

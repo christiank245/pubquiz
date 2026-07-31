@@ -112,12 +112,21 @@ func (h publicHandlers) quiz(c echo.Context) error {
 
 	quizID := strings.TrimSpace(c.QueryParam("id"))
 	if quizID == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "quiz id is required")
+		return h.renderers.page(c, PageData{
+			Title:        "404 - Page not found",
+			PageTemplate: "not_found",
+			StatusCode:   http.StatusNotFound,
+		})
 	}
 
 	quiz, seatsLeft, err := LoadQuiz(h.app, quizID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "failed to load quiz")
+		log.Printf("quiz lookup failed for %q: %v", quizID, err)
+		return h.renderers.page(c, PageData{
+			Title:        "404 - Page not found",
+			PageTemplate: "not_found",
+			StatusCode:   http.StatusNotFound,
+		})
 	}
 
 	if isHTMXRequest(c) {

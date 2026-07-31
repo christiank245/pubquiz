@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"embed"
 	"html/template"
-	"io/fs"
 	"net/http"
 
 	"github.com/labstack/echo/v5"
@@ -24,11 +23,11 @@ var tpl = template.Must(template.New("site").Funcs(template.FuncMap{
 	"web/templates/pages/*.html",
 ))
 
-func assetsSubFS() (fs.FS, error) {
-	return fs.Sub(webFiles, "web/public")
-}
-
 func renderPage(c echo.Context, data routeapi.PageData) error {
+	status := data.StatusCode
+	if status == 0 {
+		status = http.StatusOK
+	}
 	var buf bytes.Buffer
 	if err := tpl.ExecuteTemplate(&buf, "layout_start", data); err != nil {
 		return err
@@ -39,7 +38,7 @@ func renderPage(c echo.Context, data routeapi.PageData) error {
 	if err := tpl.ExecuteTemplate(&buf, "layout_end", data); err != nil {
 		return err
 	}
-	return c.HTMLBlob(http.StatusOK, buf.Bytes())
+	return c.HTMLBlob(status, buf.Bytes())
 }
 
 func renderRegisterPanel(c echo.Context, data routeapi.RegisterPanelData, htmx bool) error {
