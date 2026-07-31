@@ -1,25 +1,15 @@
 {{define "not_found"}}
 <section class="mx-auto max-w-4xl rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-  <div class="grid gap-8 md:grid-cols-[240px_1fr] md:items-center">
+  <div class="grid gap-6">
     <div class="flex justify-center">
-      <svg viewBox="0 0 240 240" class="h-56 w-56" role="img" aria-label="Gopher looking for the missing page">
-        <circle cx="120" cy="120" r="108" fill="#f8fafc" stroke="#cbd5e1" stroke-width="4"/>
-        <circle cx="90" cy="95" r="18" fill="#d8b48a"/>
-        <circle cx="150" cy="95" r="18" fill="#d8b48a"/>
-        <ellipse cx="120" cy="132" rx="62" ry="52" fill="#7fbf7f" stroke="#2f855a" stroke-width="4"/>
-        <ellipse cx="120" cy="150" rx="34" ry="24" fill="#f6d7b0"/>
-        <circle cx="105" cy="126" r="6" fill="#1f2937"/>
-        <circle cx="135" cy="126" r="6" fill="#1f2937"/>
-        <path d="M108 150c8 8 16 8 24 0" fill="none" stroke="#1f2937" stroke-width="4" stroke-linecap="round"/>
-        <circle cx="120" cy="138" r="5" fill="#1f2937"/>
-        <path d="M152 150c18 8 28 18 38 34" fill="none" stroke="#7c3aed" stroke-width="8" stroke-linecap="round"/>
-        <circle cx="198" cy="188" r="26" fill="none" stroke="#7c3aed" stroke-width="8"/>
-        <path d="M205 195l18 18" fill="none" stroke="#7c3aed" stroke-width="8" stroke-linecap="round"/>
-      </svg>
+      <img
+        src="/assets/404-search-gopher.png"
+        alt="A gopher searching with a magnifying glass"
+        class="h-auto w-full max-w-[420px]"
+      />
     </div>
 
-    <div>
-      <p class="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-700">404</p>
+    <div class="text-center">
       <h1 class="mt-2 text-3xl font-bold">This page has gone out for a beer</h1>
       <p class="mt-4 text-slate-700">
         Our gopher searched behind the bar, under the tables, and inside the trivia box. Still nothing.
