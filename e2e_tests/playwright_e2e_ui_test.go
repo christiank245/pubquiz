@@ -8,9 +8,9 @@ import (
 
 func defineUITests(env *playwrightE2EEnv) {
 	It("loads the public registration panel through htmx", func() {
-		page, err := env.browser.NewPage()
+		page, cleanup, err := env.newPage()
 		Expect(err).NotTo(HaveOccurred())
-		defer page.Close()
+		defer func() { Expect(cleanup()).To(Succeed()) }()
 
 		_, err = page.Goto(env.baseURL, playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
 		Expect(err).NotTo(HaveOccurred())
@@ -30,9 +30,9 @@ func defineUITests(env *playwrightE2EEnv) {
 	})
 
 	It("redirects protected admin routes to login and shows login errors", func() {
-		page, err := env.browser.NewPage()
+		page, cleanup, err := env.newPage()
 		Expect(err).NotTo(HaveOccurred())
-		defer page.Close()
+		defer func() { Expect(cleanup()).To(Succeed()) }()
 
 		_, err = page.Goto(env.baseURL+"/quiz-admin", playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
 		Expect(err).NotTo(HaveOccurred())
@@ -45,9 +45,9 @@ func defineUITests(env *playwrightE2EEnv) {
 	})
 
 	It("wires quiz admin collection navigation through htmx targets", func() {
-		page, err := env.browser.NewPage()
+		page, cleanup, err := env.newPage()
 		Expect(err).NotTo(HaveOccurred())
-		defer page.Close()
+		defer func() { Expect(cleanup()).To(Succeed()) }()
 
 		Expect(loginQuizAdmin(page, env.baseURL, env.quizAdminEmail, env.quizAdminPassword)).To(Succeed())
 

@@ -8,8 +8,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,16 +23,19 @@ import (
 )
 
 type playwrightE2EEnv struct {
-	baseURL string
-	dataDir string
-	appCmd  *exec.Cmd
-	appLogs bytes.Buffer
+	baseURL     string
+	dataDir     string
+	videoDir    string
+	recordVideo bool
+	appCmd      *exec.Cmd
+	appLogs     bytes.Buffer
 
 	pw      *playwright.Playwright
 	browser playwright.Browser
 
 	quizAdminEmail    string
 	quizAdminPassword string
+	systemAdminToken  string
 }
 
 func (env *playwrightE2EEnv) setup() {
@@ -46,6 +53,15 @@ func (env *playwrightE2EEnv) setup() {
 		_ = os.RemoveAll(env.dataDir)
 	})
 
+	env.recordVideo = strings.TrimSpace(os.Getenv("PLAYWRIGHT_E2E_RECORD_VIDEO")) == "1"
+	if env.recordVideo {
+		cwd, err := os.Getwd()
+		Expect(err).NotTo(HaveOccurred())
+		env.videoDir = filepath.Join(cwd, ".playwright-videos", time.Now().Format("20060102-150405"))
+		Expect(os.MkdirAll(env.videoDir, 0o755)).To(Succeed())
+		GinkgoWriter.Printf("Playwright videos will be written to %s\n", env.videoDir)
+	}
+
 	env.appCmd = exec.Command("go", "run", "..", "serve", "--http", fmt.Sprintf("127.0.0.1:%d", port), "--dir", env.dataDir, "--dev=false")
 	env.appCmd.Stdout = &env.appLogs
 	env.appCmd.Stderr = &env.appLogs
@@ -58,6 +74,7 @@ func (env *playwrightE2EEnv) setup() {
 
 	adminToken, err := loginSystemAdmin(env.baseURL, systemAdminEmail, systemAdminPassword)
 	Expect(err).NotTo(HaveOccurred())
+	env.systemAdminToken = adminToken
 
 	env.quizAdminEmail = fmt.Sprintf("quizadmin-%d@example.com", time.Now().UnixNano())
 	env.quizAdminPassword = "Password123!"
@@ -67,8 +84,19 @@ func (env *playwrightE2EEnv) setup() {
 	env.pw, err = playwright.Run()
 	Expect(err).NotTo(HaveOccurred())
 
-	env.browser, err = env.pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+	launchOptions := playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(true),
+	}
+	if slowMoMS := strings.TrimSpace(os.Getenv("PLAYWRIGHT_E2E_SLOWMO_MS")); slowMoMS != "" {
+		ms, parseErr := strconv.Atoi(slowMoMS)
+		Expect(parseErr).NotTo(HaveOccurred())
+		Expect(ms).To(BeNumerically(">", 0))
+		launchOptions.SlowMo = playwright.Float(float64(ms))
+	}
+
+	env.browser, err = env.pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+		Headless: launchOptions.Headless,
+		SlowMo:   launchOptions.SlowMo,
 	})
 	Expect(err).NotTo(HaveOccurred())
 }
@@ -84,6 +112,91 @@ func (env *playwrightE2EEnv) cleanup() {
 		_ = env.appCmd.Process.Kill()
 		_, _ = env.appCmd.Process.Wait()
 	}
+}
+
+func (env *playwrightE2EEnv) newPage() (playwright.Page, func() error, error) {
+	specName := sanitizeVideoName(CurrentSpecReport().FullText())
+	var context playwright.BrowserContext
+	var err error
+	if env.recordVideo {
+		context, err = env.browser.NewContext(playwright.BrowserNewContextOptions{
+			RecordVideo: &playwright.RecordVideo{
+				Dir: playwright.String(env.videoDir),
+				Size: &playwright.Size{
+					Width:  1280,
+					Height: 720,
+				},
+			},
+		})
+	} else {
+		context, err = env.browser.NewContext()
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	page, err := context.NewPage()
+	if err != nil {
+		_ = context.Close()
+		return nil, nil, err
+	}
+
+	cleanup := func() error {
+		if err := page.Close(); err != nil {
+			_ = context.Close()
+			return err
+		}
+		if err := context.Close(); err != nil {
+			return err
+		}
+		if env.recordVideo {
+			return renameRecordedVideo(env.videoDir, specName)
+		}
+		return nil
+	}
+
+	return page, cleanup, nil
+}
+
+func renameRecordedVideo(recordDir, specName string) error {
+	entries, err := os.ReadDir(recordDir)
+	if err != nil {
+		return err
+	}
+	var videoPath string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(strings.ToLower(name), ".webm") {
+			videoPath = filepath.Join(recordDir, name)
+			break
+		}
+	}
+	if videoPath == "" {
+		return fmt.Errorf("no video file found in %s", recordDir)
+	}
+
+	targetPath := filepath.Join(recordDir, specName+".webm")
+	if err := os.RemoveAll(targetPath); err != nil {
+		return err
+	}
+	if videoPath == targetPath {
+		return nil
+	}
+	return os.Rename(videoPath, targetPath)
+}
+
+func sanitizeVideoName(value string) string {
+	replacer := regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+	cleaned := strings.TrimSpace(value)
+	cleaned = replacer.ReplaceAllString(cleaned, "-")
+	cleaned = strings.Trim(cleaned, "-_.")
+	if cleaned == "" {
+		return "spec"
+	}
+	return cleaned
 }
 
 func freeLocalPort() (int, error) {
@@ -312,6 +425,117 @@ func createQuizAdminRecord(baseURL, adminToken, email, password string) error {
 	responseBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= http.StatusBadRequest {
 		return fmt.Errorf("create quiz admin failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
+type collectionRecordsResponse struct {
+	Items []map[string]any `json:"items"`
+}
+
+func listCollectionRecords(baseURL, adminToken, collection string) ([]map[string]any, error) {
+	endpoint := fmt.Sprintf("%s/api/collections/%s/records", strings.TrimRight(baseURL, "/"), url.PathEscape(collection))
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("list %s records failed with status %d: %s", collection, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var payload collectionRecordsResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	return payload.Items, nil
+}
+
+func updateCollectionRecord(baseURL, adminToken, collection, recordID string, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	endpoint := fmt.Sprintf("%s/api/collections/%s/records/%s", strings.TrimRight(baseURL, "/"), url.PathEscape(collection), url.PathEscape(recordID))
+	req, err := http.NewRequest(http.MethodPatch, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("update %s record %s failed with status %d: %s", collection, recordID, resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
+func deleteCollectionRecord(baseURL, adminToken, collection, recordID string) error {
+	endpoint := fmt.Sprintf("%s/api/collections/%s/records/%s", strings.TrimRight(baseURL, "/"), url.PathEscape(collection), url.PathEscape(recordID))
+	req, err := http.NewRequest(http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("delete %s record %s failed with status %d: %s", collection, recordID, resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
+func deleteCollection(baseURL, adminToken, collection string) error {
+	endpoint := fmt.Sprintf("%s/api/collections/%s", strings.TrimRight(baseURL, "/"), url.PathEscape(collection))
+	req, err := http.NewRequest(http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("delete collection %s failed with status %d: %s", collection, resp.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	return nil
 }
