@@ -49,4 +49,43 @@ func defineAdminLocationTests(env *playwrightE2EEnv) {
 		Expect(page.Locator(`#admin-delete-modal button:has-text("Delete")`).Click()).To(Succeed())
 		Expect(page.Locator(`text=Deleted 1 entrie(s).`).First().WaitFor()).To(Succeed())
 	})
+
+	It("rejects invalid location input", func() {
+		page, cleanup, err := env.newPage()
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { Expect(cleanup()).To(Succeed()) }()
+
+		Expect(loginQuizAdmin(page, env.baseURL, env.quizAdminEmail, env.quizAdminPassword)).To(Succeed())
+		_, err = page.Goto(env.baseURL+"/quiz-admin/collections/locations", playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(page.Locator(`a:has-text("Add entry")`).Click()).To(Succeed())
+		modal := page.Locator(`#admin-edit-modal`)
+		Expect(modal.First().WaitFor()).To(Succeed())
+		Expect(modal.Locator(`input[name="field_name"]`).Fill(fmt.Sprintf("Invalid Location %d", time.Now().UnixNano()))).To(Succeed())
+		Expect(modal.Locator(`input[name="field_maps_url"]`).Fill("https://maps.google.com/?q=InvalidLocation")).To(Succeed())
+		Expect(page.Evaluate(`() => {
+			const input = document.querySelector('#admin-edit-modal input[name="field_capacity"]');
+			if (!input) {
+				throw new Error('capacity input not found');
+			}
+			input.setAttribute('type', 'text');
+		}`)).To(Succeed())
+		Expect(modal.Locator(`input[type="text"][name="field_capacity"]`).Fill("abc")).To(Succeed())
+		Expect(page.Evaluate(`() => {
+			const form = document.querySelector('#admin-edit-modal form');
+			if (!form) {
+				throw new Error('admin form not found');
+			}
+			form.noValidate = true;
+			const button = form.querySelector('button[type="submit"]');
+			if (!button) {
+				throw new Error('admin submit button not found');
+			}
+			button.click();
+		}`)).To(Succeed())
+
+		Expect(page.Locator(`text=capacity must be a valid number`).First().WaitFor()).To(Succeed())
+		Expect(page.Locator(`#admin-edit-modal:not(.hidden)`).First().WaitFor()).To(Succeed())
+	})
 }
