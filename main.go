@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"io/fs"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
@@ -18,15 +19,16 @@ func main() {
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{})
 
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-		assetFS, err := assetsSubFS()
+		assetFS, err := fs.Sub(webFiles, "web/public")
 		if err != nil {
 			return err
 		}
-
 		e.Router.GET("/assets/*", apis.StaticDirectoryHandler(assetFS, false))
 
-		routeapi.RegisterPublicRoutes(e.Router, routeapi.BuildPublicHandlers(app, renderPage, renderRegisterPanel, renderTemplate))
-		routeapi.RegisterAdminRoutes(e.Router, routeapi.BuildAdminHandlers(app, renderPage, renderTemplate))
+		publicHandlers := routeapi.BuildPublicHandlers(app, renderPage, renderRegisterPanel, renderTemplate)
+		adminHandlers := routeapi.BuildAdminHandlers(app, renderPage, renderTemplate)
+		routeapi.RegisterPublicRoutes(e.Router, publicHandlers)
+		routeapi.RegisterAdminRoutes(e.Router, adminHandlers)
 
 		return nil
 	})

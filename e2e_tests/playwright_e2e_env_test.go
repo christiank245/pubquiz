@@ -78,7 +78,25 @@ func (env *playwrightE2EEnv) setup() {
 
 	env.quizAdminEmail = fmt.Sprintf("quizadmin-%d@example.com", time.Now().UnixNano())
 	env.quizAdminPassword = "Password123!"
-	Expect(createQuizAdminRecord(env.baseURL, adminToken, env.quizAdminEmail, env.quizAdminPassword)).To(Succeed())
+	username := strings.Split(env.quizAdminEmail, "@")[0]
+	body, err := json.Marshal(map[string]string{
+		"username":        username,
+		"email":           env.quizAdminEmail,
+		"password":        env.quizAdminPassword,
+		"passwordConfirm": env.quizAdminPassword,
+	})
+	Expect(err).NotTo(HaveOccurred())
+
+	req, err := http.NewRequest(http.MethodPost, env.baseURL+"/api/collections/quiz_admins/records", bytes.NewReader(body))
+	Expect(err).NotTo(HaveOccurred())
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	Expect(err).NotTo(HaveOccurred())
+	defer resp.Body.Close()
+	responseBody, _ := io.ReadAll(resp.Body)
+	Expect(resp.StatusCode).To(BeNumerically("<", http.StatusBadRequest), strings.TrimSpace(string(responseBody)))
 
 	Expect(playwright.Install()).To(Succeed())
 	env.pw, err = playwright.Run()
@@ -279,81 +297,6 @@ func registerNormalTeam(page playwright.Page, baseURL, teamName, email, size str
 	return page.Locator(`#registration-panel >> text=Registration successful`).First().WaitFor()
 }
 
-func registerSmallTeamWithMergeConsent(page playwright.Page, baseURL, teamName, email string) error {
-	_, err := page.Goto(baseURL, playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
-	if err != nil {
-		return err
-	}
-	if err := page.Locator(`a:has-text("Register team")`).First().Click(); err != nil {
-		return err
-	}
-	if err := page.Locator(`input[name="email"]`).Fill(email); err != nil {
-		return err
-	}
-	if err := page.Locator(`input[name="team_name"]`).Fill(teamName); err != nil {
-		return err
-	}
-	if err := page.Locator(`input[name="team_size"]`).Fill("3"); err != nil {
-		return err
-	}
-	if err := page.Locator(`button:has-text("Register")`).Click(); err != nil {
-		return err
-	}
-	if err := page.Locator(`text=Small teams (fewer than 4 people)`).First().WaitFor(); err != nil {
-		return err
-	}
-	if err := page.Locator(`button:has-text("Yes, we can be merged")`).Click(); err != nil {
-		return err
-	}
-	return page.Locator(`#registration-panel >> text=Registration successful`).First().WaitFor()
-}
-
-func fillRequiredInputInScope(page playwright.Page, scopeSelector, inputName, value string) error {
-	targetSelector := fmt.Sprintf(`%s input[name="%s"]`, scopeSelector, inputName)
-	target := page.Locator(targetSelector)
-
-	count, err := target.Count()
-	if err != nil {
-		return fmt.Errorf("failed checking selector %q: %w", targetSelector, err)
-	}
-	if count == 0 {
-		foundNames, namesErr := inputNamesInScope(page, scopeSelector)
-		if namesErr != nil {
-			return fmt.Errorf("expected input[name=%q] in %s, but it was not found", inputName, scopeSelector)
-		}
-		return fmt.Errorf("expected input[name=%q] in %s, but found input names: %s", inputName, scopeSelector, strings.Join(foundNames, ", "))
-	}
-
-	if err := target.First().Fill(value); err != nil {
-		return fmt.Errorf("failed filling input[name=%q] in %s: %w", inputName, scopeSelector, err)
-	}
-	return nil
-}
-
-func inputNamesInScope(page playwright.Page, scopeSelector string) ([]string, error) {
-	raw, err := page.Locator(scopeSelector).Locator("input[name]").EvaluateAll(`elements => elements.map((el) => el.getAttribute("name") || "")`)
-	if err != nil {
-		return nil, err
-	}
-
-	rawNames, ok := raw.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("unexpected evaluateAll result type: %T", raw)
-	}
-
-	names := make([]string, 0, len(rawNames))
-	for _, item := range rawNames {
-		name, ok := item.(string)
-		if ok && strings.TrimSpace(name) != "" {
-			names = append(names, name)
-		}
-	}
-	if len(names) == 0 {
-		return []string{"(none)"}, nil
-	}
-	return names, nil
-}
-
 func createSystemAdminAccount(dataDir, email, password string) error {
 	cmd := exec.Command("go", "run", "..", "--dir", dataDir, "--dev=false", "admin", "create", email, password)
 	output, err := cmd.CombinedOutput()
@@ -401,37 +344,6 @@ func loginSystemAdmin(baseURL, email, password string) (string, error) {
 		return "", fmt.Errorf("admin auth returned empty token")
 	}
 	return payload.Token, nil
-}
-
-func createQuizAdminRecord(baseURL, adminToken, email, password string) error {
-	username := strings.Split(email, "@")[0]
-	body, err := json.Marshal(map[string]string{
-		"username":        username,
-		"email":           email,
-		"password":        password,
-		"passwordConfirm": password,
-	})
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/collections/quiz_admins/records", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("create quiz admin failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
-	}
-	return nil
 }
 
 type collectionRecordsResponse struct {
