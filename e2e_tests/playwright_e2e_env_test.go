@@ -126,6 +126,11 @@ func (env *playwrightE2EEnv) newPage() (playwright.Page, func() error, error) {
 					Width:  1280,
 					Height: 720,
 				},
+				ShowActions: &playwright.ShowAction{
+					Duration: playwright.Float(1000),
+					Position: playwright.AnnotatePositionTopRight,
+					FontSize: playwright.Int(20),
+				},
 			},
 		})
 	} else {
@@ -431,6 +436,46 @@ func createQuizAdminRecord(baseURL, adminToken, email, password string) error {
 
 type collectionRecordsResponse struct {
 	Items []map[string]any `json:"items"`
+}
+
+func createCollectionRecord(baseURL, adminToken, collection string, payload any) (string, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	endpoint := fmt.Sprintf("%s/api/collections/%s/records", strings.TrimRight(baseURL, "/"), url.PathEscape(collection))
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return "", fmt.Errorf("create %s record failed with status %d: %s", collection, resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(responseBody, &created); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(created.ID) == "" {
+		return "", fmt.Errorf("create %s record returned empty id", collection)
+	}
+	return created.ID, nil
 }
 
 func listCollectionRecords(baseURL, adminToken, collection string) ([]map[string]any, error) {

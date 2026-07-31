@@ -58,6 +58,7 @@ type UnregisterViewData struct {
 type PageData struct {
 	Title               string
 	PageTemplate        string
+	StatusCode          int
 	IsQuizAdmin         bool
 	ShowQuizAdminLogout bool
 	SetupError          string
